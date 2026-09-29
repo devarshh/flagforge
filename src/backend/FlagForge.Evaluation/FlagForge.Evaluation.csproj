@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Pure evaluation engine: no package or project references by design. -->
+  <PropertyGroup>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="FlagForge.Evaluation.Tests" />
+  </ItemGroup>
+
+</Project>

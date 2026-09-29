@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\FlagForge.Application\FlagForge.Application.csproj" />
+    <ProjectReference Include="..\FlagForge.Infrastructure\FlagForge.Infrastructure.csproj" />
+    <ProjectReference Include="..\FlagForge.ServiceDefaults\FlagForge.ServiceDefaults.csproj" />
+  </ItemGroup>
+
+</Project>

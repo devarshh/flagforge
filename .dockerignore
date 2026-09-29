@@ -1,0 +1,17 @@
+# The .NET images build with the repository root as context; only global.json, the
+# Directory.*.props files, and src/backend are needed.
+.git
+.github
+.tools
+.env
+**/bin
+**/obj
+**/TestResults
+**/node_modules
+**/dist
+src/frontend
+tests
+deploy
+infra
+docs
+scripts

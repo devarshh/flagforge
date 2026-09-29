@@ -1,0 +1,20 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/backend/FlagForge.Application/FlagForge.Application.csproj" />
+    <Project Path="src/backend/FlagForge.Domain/FlagForge.Domain.csproj" />
+    <Project Path="src/backend/FlagForge.Evaluation/FlagForge.Evaluation.csproj" />
+    <Project Path="src/backend/FlagForge.EvaluationApi/FlagForge.EvaluationApi.csproj" />
+    <Project Path="src/backend/FlagForge.Infrastructure/FlagForge.Infrastructure.csproj" />
+    <Project Path="src/backend/FlagForge.ManagementApi/FlagForge.ManagementApi.csproj" />
+    <Project Path="src/backend/FlagForge.Migrator/FlagForge.Migrator.csproj" />
+    <Project Path="src/backend/FlagForge.ServiceDefaults/FlagForge.ServiceDefaults.csproj" />
+    <Project Path="src/backend/FlagForge.Worker/FlagForge.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/backend/FlagForge.Evaluation.Tests/FlagForge.Evaluation.Tests.csproj" />
+    <Project Path="tests/backend/FlagForge.EvaluationApi.IntegrationTests/FlagForge.EvaluationApi.IntegrationTests.csproj" />
+    <Project Path="tests/backend/FlagForge.ManagementApi.IntegrationTests/FlagForge.ManagementApi.IntegrationTests.csproj" />
+    <Project Path="tests/backend/FlagForge.Testing/FlagForge.Testing.csproj" />
+    <Project Path="tests/backend/FlagForge.Worker.IntegrationTests/FlagForge.Worker.IntegrationTests.csproj" />
+  </Folder>
+</Solution>

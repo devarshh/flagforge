@@ -1,0 +1,36 @@
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Locally downloaded tool binaries (actionlint, kubeconform, kustomize)
+.tools/
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+TestResults/
+coverage/
+*.trx
+artifacts/
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+.vite/
+npm-debug.log*
+
+# Editors and OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+.DS_Store
+Thumbs.db
+
+# Generated deployment files
+deploy/k8s/**/.generated/

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3.extensibility.core" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+    <PackageReference Include="Respawn" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="Testcontainers.MsSql" />
+    <PackageReference Include="Testcontainers.Redis" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\backend\FlagForge.ManagementApi\FlagForge.ManagementApi.csproj" />
+    <ProjectReference Include="..\..\..\src\backend\FlagForge.EvaluationApi\FlagForge.EvaluationApi.csproj" />
+    <ProjectReference Include="..\..\..\src\backend\FlagForge.Worker\FlagForge.Worker.csproj" />
+  </ItemGroup>
+
+</Project>
