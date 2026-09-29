@@ -81,3 +81,10 @@ csharp_space_after_keywords_in_control_flow_statements = true
 
 # ASP.NET Core and generic hosts have no SynchronizationContext, so ConfigureAwait adds noise without benefit.
 dotnet_diagnostic.CA2007.severity = none
+
+# Enum members such as FlagType.String and AttributeValueKind.Number name JSON value types: that is the domain language.
+dotnet_diagnostic.CA1720.severity = none
+
+[tests/**.cs]
+# Test names read as sentences: Disabled_flag_serves_the_off_variation.
+dotnet_diagnostic.CA1707.severity = none

@@ -8,7 +8,7 @@ verify the current state (build + tests), and continue from the first unchecked 
 | Phase | Work | Checkpoint | Status |
 |---|---|---|---|
 | 0 | Repository scaffolding, tooling configs, solution and empty projects, npm workspace, `.env.example`, `PROGRESS.md`, LICENSE, `git init` | `dotnet build` succeeds; `npm ci && npm run build` succeeds in `src/frontend` | [x] |
-| 1 | Evaluation engine and validator with full tests (§7) | Tests pass; coverage ≥95% | [ ] |
+| 1 | Evaluation engine and validator with full tests (§7) | Tests pass; coverage ≥95% | [x] |
 | 2 | Domain, Infrastructure, EF Core model and initial migration, Migrator with seed data | Against the Compose SQL Server: the migrator runs twice and the second run changes nothing | [ ] |
 | 3 | ServiceDefaults and Management API with integration tests | Tests pass; `/scalar` lists every endpoint | [ ] |
 | 4 | Evaluation API with integration tests | Tests pass | [ ] |
@@ -23,7 +23,7 @@ verify the current state (build + tests), and continue from the first unchecked 
 
 ## Current state
 
-Phase 0 complete. Next: Phase 1 (evaluation engine).
+Phases 0–1 complete (245 evaluation tests, 99.7% line coverage). Next: Phase 2 (domain, EF Core, migrator).
 
 ## Tooling (Phase 0 check, 2026-09-29, macOS arm64)
 
@@ -57,5 +57,17 @@ Phase 0 complete. Next: Phase 1 (evaluation engine).
 - **The demo consumes the SDK's built `dist/`** through its `exports` map, exactly like an external consumer. Root
   `lint`, `typecheck`, and `test` scripts build the SDK first; the demo's `predev` builds it for `npm run dev`.
 - **`npm run lint` also runs `prettier --check`**, so one command covers both linters in CI.
+
+- **Evaluation model is attribute-free.** The targeting records (`TargetingConfig`, `Rule`, `Clause`, `Serve`, ...)
+  live in `FlagForge.Evaluation` with no serialization attributes; the JSON contract (camelCase names, camelCase enum
+  strings, `SCREAMING_SNAKE` reason kinds) is configured once in the application's JSON options.
+- **Context details not fixed by the spec:** a `null` attribute is accepted and treated as missing; arrays may not
+  contain `null`; duplicate attribute names are a 400; unknown top-level context properties are ignored.
+- **Numeric parsing** uses `NumberStyles.Float` with the invariant culture (sign, decimal point, exponent; no
+  thousands separators, so `"1,000"` is not a number). Number bucket values drop trailing zeros so `31` and `31.0`
+  hash identically.
+- **Normalization on save** also removes duplicate keys inside a target list and drops empty target lists, in addition
+  to ordering rollout weights by variation.
+- **Extra bounds** not in the spec: rule ids at most 64 characters, rule descriptions at most 200.
 
 ## Unverified
