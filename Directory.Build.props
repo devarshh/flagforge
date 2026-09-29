@@ -5,8 +5,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
-    <!-- Chiseled runtime images ship without ICU; run in invariant mode everywhere so local runs match containers. -->
-    <InvariantGlobalization>true</InvariantGlobalization>
     <Deterministic>true</Deterministic>
     <Authors>Devarsh Joshi</Authors>
     <Product>FlagForge</Product>

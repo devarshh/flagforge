@@ -88,3 +88,7 @@ dotnet_diagnostic.CA1720.severity = none
 [tests/**.cs]
 # Test names read as sentences: Disabled_flag_serves_the_off_variation.
 dotnet_diagnostic.CA1707.severity = none
+
+[src/backend/FlagForge.Infrastructure/Persistence/Migrations/**.cs]
+# Scaffolded by dotnet-ef; analyzers and dotnet format leave it alone.
+generated_code = true

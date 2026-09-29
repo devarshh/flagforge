@@ -9,7 +9,7 @@ verify the current state (build + tests), and continue from the first unchecked 
 |---|---|---|---|
 | 0 | Repository scaffolding, tooling configs, solution and empty projects, npm workspace, `.env.example`, `PROGRESS.md`, LICENSE, `git init` | `dotnet build` succeeds; `npm ci && npm run build` succeeds in `src/frontend` | [x] |
 | 1 | Evaluation engine and validator with full tests (§7) | Tests pass; coverage ≥95% | [x] |
-| 2 | Domain, Infrastructure, EF Core model and initial migration, Migrator with seed data | Against the Compose SQL Server: the migrator runs twice and the second run changes nothing | [ ] |
+| 2 | Domain, Infrastructure, EF Core model and initial migration, Migrator with seed data | Against the Compose SQL Server: the migrator runs twice and the second run changes nothing | [x] |
 | 3 | ServiceDefaults and Management API with integration tests | Tests pass; `/scalar` lists every endpoint | [ ] |
 | 4 | Evaluation API with integration tests | Tests pass | [ ] |
 | 5 | Worker with integration tests | Tests pass | [ ] |
@@ -23,7 +23,8 @@ verify the current state (build + tests), and continue from the first unchecked 
 
 ## Current state
 
-Phases 0–1 complete (245 evaluation tests, 99.7% line coverage). Next: Phase 2 (domain, EF Core, migrator).
+Phases 0–2 complete. Phase 2 checkpoint: migrator run twice against the Compose SQL Server; per-table row counts and
+checksums identical after the second run. Next: Phase 3 (ServiceDefaults and Management API).
 
 ## Tooling (Phase 0 check, 2026-09-29, macOS arm64)
 
@@ -52,8 +53,11 @@ Phases 0–1 complete (245 evaluation tests, 99.7% line coverage). Next: Phase 2
   no threshold option.
 - **`dotnet-tools.json` at the repository root.** That is where `dotnet new tool-manifest` puts it on .NET 10
   (pins `dotnet-ef` and `reportgenerator`).
-- **`InvariantGlobalization` for every .NET project** (Directory.Build.props), so local runs behave like the chiseled
-  images, which ship without ICU.
+- **`-chiseled-extra` runtime images instead of plain `-chiseled`.** `Microsoft.Data.SqlClient` throws
+  `NotSupportedException: Globalization Invariant Mode is not supported` when opening a connection, and the plain
+  chiseled images run in invariant mode because they ship without ICU. The `-extra` variants
+  (`aspnet:10.0-noble-chiseled-extra`, `runtime:10.0-noble-chiseled-extra`) are still distroless and non-root, with no
+  shell or package manager, and add ICU and tzdata. Found in Phase 2 by running locally with invariant mode on.
 - **The demo consumes the SDK's built `dist/`** through its `exports` map, exactly like an external consumer. Root
   `lint`, `typecheck`, and `test` scripts build the SDK first; the demo's `predev` builds it for `npm run dev`.
 - **`npm run lint` also runs `prettier --check`**, so one command covers both linters in CI.
@@ -69,5 +73,28 @@ Phases 0–1 complete (245 evaluation tests, 99.7% line coverage). Next: Phase 2
 - **Normalization on save** also removes duplicate keys inside a target list and drops empty target lists, in addition
   to ordering rollout weights by variation.
 - **Extra bounds** not in the spec: rule ids at most 64 characters, rule descriptions at most 200.
+
+- **Entity `ProjectEnvironment`** (table `Environments`): a class named `Environment` would clash with
+  `System.Environment` in every file that imports the domain namespace.
+- **JSON columns:** documents (variations, targets, rules, serves, schedule payloads, audit before/after) are mapped with
+  one System.Text.Json value converter using the API's JSON options, so stored JSON has exactly the API shape. EF Core's
+  structural JSON mapping (owned/complex types) cannot represent variation values, which are arbitrary JSON. `Tags`
+  use EF Core's built-in primitive-collection JSON mapping so the tag filter translates to `OPENJSON` in SQL. All are
+  `nvarchar(max)`; `UseCompatibilityLevel(160)` keeps that true on Azure SQL too.
+- **UUIDv7 keys:** `Guid.CreateVersion7(timeProvider.GetUtcNow())` as specified. Caveat for interviews: SQL Server
+  sorts `uniqueidentifier` by its last six bytes first, so v7's time ordering does not reduce page splits there; at
+  scale, prefer server-side `NEWSEQUENTIALID()` or EF Core's sequential GUID generator.
+- **No foreign keys on `AuditEntries` and `FlagUsageHourly`:** audit history must survive deletions, and a usage flush
+  must never fail because a flag was deleted between evaluation and flush.
+- **Cascade paths:** configs and scheduled changes cascade from flags; their environment FKs are `NO ACTION` because
+  SQL Server allows only one cascade path. Environment deletion removes those rows explicitly.
+- **`IncrementConfigVersionAsync` lives on the DbContext abstraction** because it must run inside the caller's
+  transaction; other raw SQL (schedule claiming, usage MERGE, stale detection) sits behind separate interfaces.
+- **JSON flag values must be an object or an array;** strings, numbers, and booleans have their own flag types.
+- **Seed data:** the six demo flags are 14 days old (not yet stale-eligible); `dark-mode-beta` is 60 days old with no
+  usage (stale); `legacy-search` is archived; `max-cart-items` is permanent. Development has persona-sensitive rules
+  (plan, email domain, beta) so the demo's "Shopping as" switcher visibly changes the store. Seeded variation and rule
+  ids are fixed, readable values in the `v_`/`r_` + 6 character format.
+- **Migrator content root** is the app directory, so `dotnet run --project` works from any folder.
 
 ## Unverified
