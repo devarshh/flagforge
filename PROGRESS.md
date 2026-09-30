@@ -14,7 +14,7 @@ verify the current state (build + tests), and continue from the first unchecked 
 | 4 | Evaluation API with integration tests | Tests pass | [x] |
 | 5 | Worker with integration tests | Tests pass | [x] |
 | 6 | SDK and React bindings with tests | Tests pass; package builds with types | [x] |
-| 7 | Dashboard with tests | Lint, typecheck, tests, and build pass; against locally running APIs you can sign in, create a flag, edit targeting, and save | [ ] |
+| 7 | Dashboard with tests | Lint, typecheck, tests, and build pass; against locally running APIs you can sign in, create a flag, edit targeting, and save | [x] |
 | 8 | Demo app | Builds; connects to the local evaluation API and updates live when a flag changes | [ ] |
 | 9 | Dockerfiles, Compose, gateway, smoke test, Makefile | `docker compose up --build -d` on a clean checkout, then the smoke test passes in full mode | [ ] |
 | 10 | Kubernetes base, component, overlays, migrator Job, platform, kind scripts | Every kustomization validates (§20.6); if kind and helm are available, `scripts/k8s-local-up.sh --smoke` passes | [ ] |
@@ -23,9 +23,12 @@ verify the current state (build + tests), and continue from the first unchecked 
 
 ## Current state
 
-Phases 0–6 complete. Backend: 366 tests. SDK: 22 Vitest tests; `tsc` emits ESM plus declarations for `.` and
-`./react`. Next: Phase 7 (dashboard). Until Phases 7–8 add tests, `npm test` fails for the dashboard and demo
-workspaces with "no test files found".
+Phases 0–7 complete. Backend: 366 tests. SDK: 22 Vitest tests. Dashboard: 85 Vitest tests; lint, typecheck, and
+build pass. Phase 7 was checked by hand against the Compose SQL Server and Redis with the migrator, the management
+API, and `npm run dev`: signed in as the seeded admin, created `checkout-redesign`, added a rule and a 25/75 default
+rollout in development, reviewed and saved (confirmed through the API and the audit log), ran the test panel, and
+looked at light mode and a 360 px viewport. Next: Phase 8 (demo app). Until it adds tests, root `npm test` fails for
+the demo workspace with "no test files found".
 
 ## Tooling (Phase 0 check, 2026-09-29, macOS arm64)
 
@@ -167,5 +170,33 @@ workspaces with "no test files found".
 - **Default SDK logger** writes warnings and errors to the console (`[flagforge]` prefix); pass `logger: {}` to
   silence it. Invalid options (missing `baseUrl`, `sdkKey`, or `context.key`) throw at `createClient`, since they
   are programming errors rather than flag unavailability.
+
+- **Dashboard structure:** each feature folder holds its API hooks and components; the project settings page
+  (details, environments, SDK keys, danger zone) lives in `features/projects/`, and there is no `features/account/`
+  because §12.1 puts `ChangePasswordPage` in `auth/`. Helpers such as the draft reducer, operator mapping, rollout
+  math, and validation are plain `.ts` modules so React Fast Refresh keeps working; test helpers live in `src/test/`
+  (the only place the react-refresh lint rule is off).
+- **Audit details open in a side panel.** The free MUI X Data Grid has no expandable detail rows (a Pro feature), so a
+  row click (or its view button) opens the entry's `JsonDiff` in a drawer. The flag History tab uses expandable
+  accordion rows.
+- **Targeting draft and server paths:** the editor sends every variation's target list (the server drops empty ones),
+  so `targets[i]` error paths match the draft's rows. Rollouts send only non-zero weights, because the server counts
+  any listed variation as in use and would block removing it; a server error on one weight is shown on the rollout.
+  Client validation mirrors `TargetingValidator` with the same paths. Rollout problems show while typing; other
+  problems appear after the first "Review changes".
+- **Concurrency in the editor:** saves send `expectedVersion`; a 409 opens the conflict dialog. While the draft has no
+  unsaved changes it adopts newer saved configs automatically (for example after a toggle). Quick toggles from the
+  list and the header send no `expectedVersion`, because turning a flag on or off expresses intent regardless of
+  other edits; they update the list and detail caches optimistically and roll back on error.
+- **Flag list state lives in the URL** (`q`, `tag`, `archived`, `page`, `pageSize`). The API has no tag endpoint, so
+  the tag chips come from the current page plus the active tag; clicking a tag in a row also filters.
+- **Additions the API supports:** "Add environment" and project name and description editing on the settings page.
+  The audit "Who" filter lists every user for admins; for everyone it includes the actors on the current page
+  (non-admins cannot list users).
+- **Scheduled changes poll every 15 s** while any change is pending or running, matching the worker's interval.
+- **Bundles:** React/TanStack and MUI core are split into their own long-cached chunks (Rolldown `codeSplitting`
+  groups); the Data Grid, charts, and date pickers load with the pages that use them.
+- **Dialog focus in development:** React StrictMode runs MUI's focus-trap effect twice in `npm run dev`, which moves
+  focus from an `autoFocus` field to the dialog. Production builds focus the field (checked with `vite preview`).
 
 ## Unverified

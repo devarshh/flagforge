@@ -34,6 +34,7 @@ export default defineConfig(
   },
   {
     files: ['apps/*/src/**/*.tsx'],
+    ignores: ['apps/*/src/test/**'],
     extends: [reactRefresh.configs.vite],
   },
   {
