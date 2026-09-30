@@ -60,7 +60,8 @@ export const theme = createTheme({
   components: {
     MuiCssBaseline: {
       styleOverrides: {
-        'code, kbd, .mono': { fontFamily: fonts.mono },
+        // The doubled class outranks component styles (one class each), which are injected after global ones.
+        'code, kbd, .mono.mono': { fontFamily: fonts.mono },
         '.visually-hidden': {
           position: 'absolute',
           width: 1,
