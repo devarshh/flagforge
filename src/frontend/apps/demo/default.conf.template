@@ -1,0 +1,51 @@
+# The Acme Coffee demo under /demo/ on port 8080. The image's entrypoint renders this template at startup and
+# replaces only environment variables that are defined (DEMO_SDK_KEY), so nginx variables such as $uri stay intact.
+server {
+    listen 8080;
+    server_name _;
+    root /usr/share/nginx/html;
+    server_tokens off;
+    # Relative redirects keep the gateway's host and port.
+    absolute_redirect off;
+
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+
+    include /etc/nginx/snippets/security-headers.conf;
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # Runtime configuration: one image works with any environment's SDK key.
+    location = /demo/config.json {
+        include /etc/nginx/snippets/security-headers.conf;
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        return 200 '{"sdkKey":"${DEMO_SDK_KEY}"}';
+    }
+
+    # Built assets have content hashes in their names, so browsers may keep them for a year.
+    location /demo/assets/ {
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        try_files $uri =404;
+    }
+
+    location = /demo/index.html {
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-cache" always;
+    }
+
+    location = /demo {
+        return 301 /demo/;
+    }
+
+    location /demo/ {
+        try_files $uri /demo/index.html;
+    }
+}

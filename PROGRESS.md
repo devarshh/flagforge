@@ -16,21 +16,26 @@ verify the current state (build + tests), and continue from the first unchecked 
 | 6 | SDK and React bindings with tests | Tests pass; package builds with types | [x] |
 | 7 | Dashboard with tests | Lint, typecheck, tests, and build pass; against locally running APIs you can sign in, create a flag, edit targeting, and save | [x] |
 | 8 | Demo app | Builds; connects to the local evaluation API and updates live when a flag changes | [x] |
-| 9 | Dockerfiles, Compose, gateway, smoke test, Makefile | `docker compose up --build -d` on a clean checkout, then the smoke test passes in full mode | [ ] |
+| 9 | Dockerfiles, Compose, gateway, smoke test, Makefile | `docker compose up --build -d` on a clean checkout, then the smoke test passes in full mode | [x] |
 | 10 | Kubernetes base, component, overlays, migrator Job, platform, kind scripts | Every kustomization validates (§20.6); if kind and helm are available, `scripts/k8s-local-up.sh --smoke` passes | [ ] |
 | 11 | Bicep, all GitHub workflows, Dependabot, PR template | `az bicep build` (if `az` is available) and `actionlint` pass | [ ] |
 | 12 | Documentation (§25), polish, and final verification | Run everything again from a clean state (backend tests, frontend tests, Compose smoke test, manifest validation); `PROGRESS.md` complete with Decisions and Unverified sections | [ ] |
 
 ## Current state
 
-Phases 0–8 complete. Backend: 366 tests. Frontend: 122 Vitest tests (SDK 22, dashboard 85, demo 15); root `npm run
-lint`, `typecheck`, `test`, and `build` pass. Phase 7 was checked by hand against the Compose SQL Server and Redis:
-signed in, created `checkout-redesign`, added a rule and a 25/75 default rollout in development, saved (confirmed
-through the API and the audit log), ran the test panel, and looked at light mode and a 360 px viewport. Phase 8 was
-checked against the local evaluation API through the demo's dev server: the store connected live over WebSockets,
-turning `promo-banner` off and on through the management API updated the page without a reload (702 ms from the API
-call to the banner appearing), and switching shoppers re-evaluated through `identify`. Next: Phase 9 (Dockerfiles,
-Compose, gateway, smoke test, Makefile).
+Phases 0–9 complete. Backend: 366 tests. Frontend: 122 Vitest tests (SDK 22, dashboard 85, demo 15); root `npm run
+lint`, `typecheck`, `test`, and `build` pass.
+
+Phase 9 checkpoint: a copy of exactly the files git tracks (no `.env`, no build output) ran as its own Compose project
+with fresh volumes. `docker compose up --build -d` succeeded in one pass, and the smoke test passed in full mode
+(FlagsChanged 72 ms after the toggle) and in readonly mode; bad settings exit 1 with a clear message. Through the
+gateway: security headers, immutable asset caching with gzip, `no-cache` HTML (including deep links), `/demo` to
+`/demo/`, the runtime `/demo/config.json`, 413 for bodies over 1 MB, and no warnings or errors in any service log. In
+a browser, the demo showed Live through the gateway and the dashboard's sign-in and cookie session restore worked.
+
+Earlier manual checks: Phase 7 against the Compose SQL Server and Redis (sign in, create a flag, edit targeting,
+save, test panel, light mode, 360 px); Phase 8 through the demo's dev server (a flag change reached the page in
+702 ms; `identify` on shopper switch). Next: Phase 10 (Kubernetes and kind).
 
 ## Tooling (Phase 0 check, 2026-09-29, macOS arm64)
 
@@ -215,5 +220,28 @@ Compose, gateway, smoke test, Makefile).
 - **Flag inspector** is a persistent drawer beside the store on large screens and a temporary drawer on smaller ones.
 - **Code font utility:** `.mono.mono` in both themes, because MUI component styles are injected after global styles
   and a single class lost to them.
+
+- **.NET images publish for the target architecture** (`-a $TARGETARCH`, with the SDK stage on `$BUILDPLATFORM`): the
+  app layer is 23 MB instead of 91 MB because no Windows or macOS native libraries are included, and amd64 images
+  build natively on Apple Silicon. The Dockerfiles also copy `.editorconfig`, which sets analyzer severities (warnings
+  are errors).
+- **Gateway** (`deploy/compose/gateway.nginx.conf`) resolves service names per request through Docker's DNS, so it can
+  start before the services and survives their restarts. Every nginx config uses relative redirects
+  (`absolute_redirect off`), so redirects keep the gateway's port (8080 in Compose, 8090 in kind). `/demo` redirects
+  to `/demo/`.
+- **Frontend images** share one security-headers snippet (`src/frontend/nginx/security-headers.conf`), included in
+  every location that adds headers, because `add_header` in a location drops the inherited ones.
+- **Compose healthchecks use 127.0.0.1**: in Alpine `localhost` resolves to `::1` first, and nginx listens on IPv4 only.
+  Adding an IPv6 `listen` would stop nginx starting on hosts without IPv6.
+- **`DEMO_SDK_KEY` defaults to `FF_SEED_DEMO_SDK_KEY`** through nested Compose defaults. The Aspire dashboard image is
+  pinned to 13.5.2, allows anonymous access (local only), and binds its UI to 127.0.0.1.
+- **Quiet logs:** the APIs log `Microsoft.AspNetCore.DataProtection` at Error only, because `AddAuthentication`
+  registers Data Protection (unused here) and it warns at startup about unpersisted keys. Retention deletes each batch
+  oldest first by the indexed cutoff column, which also removes EF Core's "Take without OrderBy" warning.
+- **Smoke test** registers for `FlagsChanged` before it toggles the flag, and archives its flag in a `finally` block
+  whenever creation succeeded, so failed runs clean up too.
+- **`scripts/gen-dev-secrets.sh`** writes letters and digits only (no quoting needed), guarantees SQL Server's password
+  complexity with fixed parts, refuses to overwrite `.env` without `--force`, and sets mode 600. The Makefile installs
+  node modules only when they are missing.
 
 ## Unverified
