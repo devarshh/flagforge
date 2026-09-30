@@ -78,7 +78,7 @@ export function InsightsTab({
       description={
         <>
           How often SDKs evaluated this flag in {environment.name}, by variation. Last evaluated{' '}
-          <RelativeTime value={lastEvaluatedAt} fallback="never" />.
+          <RelativeTime value={lastEvaluatedAt} fallback="never" resolution="hour" />.
         </>
       }
       actions={

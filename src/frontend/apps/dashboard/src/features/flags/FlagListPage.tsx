@@ -200,7 +200,9 @@ export function FlagListPage() {
         display: 'flex',
         valueGetter: (_value, row) =>
           latest(row.environments.map((environment) => environment.lastEvaluatedAt)),
-        renderCell: ({ value }) => <RelativeTime value={value as string | null} />,
+        renderCell: ({ value }) => (
+          <RelativeTime value={value as string | null} resolution="hour" />
+        ),
       },
       {
         field: 'status',

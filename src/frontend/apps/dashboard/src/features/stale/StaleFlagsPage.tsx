@@ -108,7 +108,7 @@ export function StaleFlagsPage() {
                     </Typography>
                   </TableCell>
                   <TableCell>
-                    <RelativeTime value={flag.lastEvaluatedAt} />
+                    <RelativeTime value={flag.lastEvaluatedAt} resolution="hour" />
                   </TableCell>
                   <TableCell align="right">
                     {canArchive && (
