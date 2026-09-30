@@ -1,6 +1,7 @@
 using FlagForge.Application.Common;
 using FlagForge.Application.Schedules;
 using FlagForge.Application.Stale;
+using FlagForge.Application.Usage;
 using FlagForge.Infrastructure.Auditing;
 using FlagForge.Infrastructure.Messaging;
 using FlagForge.Infrastructure.Persistence;
@@ -31,6 +32,7 @@ public static class DependencyInjection
         services.AddScoped<IAuditWriter, AuditWriter>();
         services.AddScoped<IStaleFlagQuery, StaleFlagQuery>();
         services.AddScoped<IScheduledChangeClaimer, ScheduledChangeClaimer>();
+        services.AddScoped<IUsageStore, UsageStore>();
         return services;
     }
 

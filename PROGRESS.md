@@ -11,7 +11,7 @@ verify the current state (build + tests), and continue from the first unchecked 
 | 1 | Evaluation engine and validator with full tests (§7) | Tests pass; coverage ≥95% | [x] |
 | 2 | Domain, Infrastructure, EF Core model and initial migration, Migrator with seed data | Against the Compose SQL Server: the migrator runs twice and the second run changes nothing | [x] |
 | 3 | ServiceDefaults and Management API with integration tests | Tests pass; `/scalar` lists every endpoint | [x] |
-| 4 | Evaluation API with integration tests | Tests pass | [ ] |
+| 4 | Evaluation API with integration tests | Tests pass | [x] |
 | 5 | Worker with integration tests | Tests pass | [ ] |
 | 6 | SDK and React bindings with tests | Tests pass; package builds with types | [ ] |
 | 7 | Dashboard with tests | Lint, typecheck, tests, and build pass; against locally running APIs you can sign in, create a flag, edit targeting, and save | [ ] |
@@ -23,10 +23,10 @@ verify the current state (build + tests), and continue from the first unchecked 
 
 ## Current state
 
-Phases 0–3 complete. Phase 3: 94 management API integration tests pass (Testcontainers SQL Server + Redis, Respawn,
-fake clock); the OpenAPI document lists all 45 operations (asserted by a test) and Scalar serves it at `/scalar`.
-Next: Phase 4 (evaluation API). Note: `dotnet test --solution` reports "zero tests" errors for the evaluation API and
-worker test projects until Phases 4–5 add their tests.
+Phases 0–4 complete. Phase 4: 19 evaluation API tests pass (SignalR over TestServer WebSockets with skipped
+negotiation, Redis-driven invalidation, revocation, TTL safety net, usage flush, 429, CORS, 32 KB body limit on real
+Kestrel, and "no SDK keys in logs" at Trace level). Next: Phase 5 (worker). `dotnet test --solution` still reports a
+"zero tests" error for the worker test project until Phase 5.
 
 ## Tooling (Phase 0 check, 2026-09-29, macOS arm64)
 
@@ -129,5 +129,26 @@ worker test projects until Phases 4–5 add their tests.
 - **Audit filters** resolve keys to ids (matching the indexes); a key that no longer exists matches nothing.
 - **ServiceDefaults adds `app.UseServiceDefaults()`** (forwarded headers, exception handler, status-code pages) because
   middleware order matters; `MapDefaultEndpoints()` maps only the health endpoints.
+
+- **Snapshot cache:** single-flight via `Lazy<Task>` per environment; loads use no caller's cancellation token (they
+  are shared); failed loads and missing environments are not cached; eviction removes the entry itself, so a load that
+  was in flight when a change arrived is never stored.
+- **Redis reconnect heals clients too:** besides evicting all snapshots (spec), the subscriber clears the SDK-key
+  cache (a revocation may have been missed) and sends `FlagsChanged` with the fresh version to every environment that
+  has connections on this pod; without that, streaming clients would keep stale values until the next change.
+- **SDK key checks:** anything with the `ffk_` prefix up to 128 characters is looked up (the seeded development key is
+  not 43 characters); unknown keys are not cached, so a new key works immediately.
+- **Hub transport is WebSockets only** (no negotiate, no long polling), matching the SDK and needing no sticky sessions.
+- **Final usage flush runs in `UsageFlushService.StopAsync`**, which the host calls after the web server has drained
+  in-flight requests, instead of an `ApplicationStopping` callback that fires before draining. `ShutdownTimeout` is
+  25 s. A flush cancelled mid-write puts its counts back for that final flush.
+- **Usage upserts** run all 300-row `MERGE ... WITH (HOLDLOCK)` statements in one transaction (a retried flush cannot
+  double count) with rows sorted so concurrent pods lock in the same order.
+- **No SDK keys in logs:** `Microsoft.AspNetCore.Hosting.Diagnostics` is capped at Warning in code, because
+  request-start logs print full URLs and hub URLs carry `access_token`. A test captures all logs at Trace and asserts
+  the key never appears (a mutation check confirmed the test fails without the filter). OpenTelemetry's ASP.NET Core
+  instrumentation redacts query values by default.
+- **Body-limit test uses real Kestrel** (.NET 10 `WebApplicationFactory.UseKestrel()`), because the in-memory
+  TestServer does not apply `MaxRequestBodySize`.
 
 ## Unverified

@@ -24,6 +24,7 @@ public sealed class FlagForgeFixture : IAsyncLifetime
     private readonly List<IAsyncDisposable> _hosts = [];
     private Respawner? _respawner;
     private ManagementApiFactory? _managementApi;
+    private EvaluationApiFactory? _evaluationApi;
 
     /// <summary>Starts at the real current time and only moves forward.</summary>
     public FakeTimeProvider Time { get; } = new(TimeProvider.System.GetUtcNow());
@@ -33,6 +34,8 @@ public sealed class FlagForgeFixture : IAsyncLifetime
     public string RedisConnectionString => _redis.GetConnectionString();
 
     public ManagementApiFactory ManagementApi => _managementApi ??= Track(new ManagementApiFactory(this));
+
+    public EvaluationApiFactory EvaluationApi => _evaluationApi ??= Track(new EvaluationApiFactory(this));
 
     public async ValueTask InitializeAsync()
     {
@@ -54,12 +57,16 @@ public sealed class FlagForgeFixture : IAsyncLifetime
         });
     }
 
-    /// <summary>Deletes all rows (except migration history) so each test starts from an empty database.</summary>
+    /// <summary>
+    /// Deletes all rows (except migration history) so each test starts from an empty database, and drops the
+    /// evaluation API's in-memory state (snapshots, cached keys, buffered usage).
+    /// </summary>
     public async Task ResetAsync()
     {
         await using var connection = new SqlConnection(SqlConnectionString);
         await connection.OpenAsync();
         await _respawner!.ResetAsync(connection);
+        _evaluationApi?.ResetState();
     }
 
     /// <summary>A DbContext for arranging and asserting on data directly.</summary>
