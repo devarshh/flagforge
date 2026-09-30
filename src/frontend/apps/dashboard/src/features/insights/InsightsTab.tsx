@@ -25,6 +25,12 @@ import { useUsage } from './usageApi';
 
 const numberFormat = new Intl.NumberFormat('en');
 const hourLabel = new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit' });
+const hourWithDayLabel = new Intl.DateTimeFormat('en', {
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
 const dayLabel = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' });
 
 export function InsightsTab({
@@ -50,13 +56,17 @@ export function InsightsTab({
     const { window, usage: buckets } = usage.data;
     const knownIds = flag.variations.map((variation) => variation.id);
     const series = seriesByVariation(buckets, window.buckets, knownIds);
-    const format = window.granularity === 'hour' ? hourLabel : dayLabel;
+    const hourly = window.granularity === 'hour';
     const totals = [...series.entries()].map(([variationId, counts]) => ({
       variationId,
       total: counts.reduce((sum, count) => sum + count, 0),
     }));
     return {
-      labels: window.buckets.map((start) => format.format(new Date(start))),
+      // The x axis is keyed by bucket start: 24 hours span 25 hourly buckets, and the first and last share an
+      // hour label, which a band axis keyed by label would merge into one bar.
+      buckets: window.buckets,
+      tickLabel: (start: number) => (hourly ? hourLabel : dayLabel).format(start),
+      tooltipLabel: (start: number) => (hourly ? hourWithDayLabel : dayLabel).format(start),
       series: [...series.entries()].map(([variationId, counts]) => {
         const index = knownIds.indexOf(variationId);
         return {
@@ -108,7 +118,17 @@ export function InsightsTab({
             <BarChart
               height={300}
               series={chart.series}
-              xAxis={[{ scaleType: 'band', data: chart.labels, tickLabelMinGap: 12 }]}
+              xAxis={[
+                {
+                  scaleType: 'band',
+                  data: chart.buckets,
+                  valueFormatter: (start: number, context) =>
+                    context.location === 'tick'
+                      ? chart.tickLabel(start)
+                      : chart.tooltipLabel(start),
+                  tickLabelMinGap: 12,
+                },
+              ]}
               yAxis={[
                 {
                   width: 56,
