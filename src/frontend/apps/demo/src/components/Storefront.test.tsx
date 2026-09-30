@@ -2,7 +2,7 @@ import { createClient, type FlagForgeClient } from '@flagforge/sdk';
 import { FlagForgeProvider } from '@flagforge/sdk/react';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { personas } from '../personas';
 import { Storefront } from './Storefront';
 
@@ -22,6 +22,20 @@ afterEach(async () => {
   await client?.close();
   client = null;
 });
+
+/** Makes MUI's `lg` breakpoint match, where the flag inspector docks beside the store and starts open. */
+function emulateWideScreen() {
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+    matches: query.includes('min-width:1200px'),
+    media: query,
+    onchange: null,
+    addListener: () => undefined,
+    removeListener: () => undefined,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+    dispatchEvent: () => false,
+  }));
+}
 
 /** A real SDK client (polling, no WebSocket) reading from whatever `served` holds. */
 function renderStore(initial: Flags) {
@@ -65,6 +79,7 @@ const fallthrough = (value: unknown, variationId: string) => ({
 
 describe('Storefront', () => {
   it('renders from defaults, then from served flags, and follows changes live', async () => {
+    emulateWideScreen();
     const { served } = renderStore({
       'promo-banner': fallthrough(true, 'true'),
       'promo-banner-text': {
@@ -112,9 +127,11 @@ describe('Storefront', () => {
     const user = userEvent.setup();
     renderStore({ 'max-cart-items': fallthrough(3, 'v_items3') });
     await screen.findByText(/Carts hold up to 3 bags/);
-    await user.click(screen.getByRole('button', { name: 'Close flag inspector', hidden: true }));
 
-    // Once the inspector drawer has closed, the store is back in the accessibility tree.
+    // On a narrow screen the inspector would cover the store, so it starts closed.
+    expect(
+      screen.queryByRole('table', { name: 'Flags served to this shopper', hidden: true }),
+    ).not.toBeInTheDocument();
     await screen.findByRole('button', { name: 'Add Espresso Roast to cart' });
     const add = () => screen.getByRole('button', { name: 'Add Espresso Roast to cart' });
     await user.click(add());

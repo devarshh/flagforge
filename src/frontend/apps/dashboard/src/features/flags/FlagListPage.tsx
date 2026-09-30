@@ -166,7 +166,8 @@ export function FlagListPage() {
       ...environments.map<GridColDef<FlagSummary>>((environment) => ({
         field: `environment:${environment.key}`,
         headerName: environment.name,
-        width: 120,
+        // Fits the header chip of the default environments, including Production's lock icon.
+        width: 136,
         sortable: false,
         display: 'flex',
         align: 'center',

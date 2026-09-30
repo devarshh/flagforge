@@ -36,10 +36,12 @@ export function Storefront({ persona, context, onPersonaChange, onOpenSettings }
   const servedTheme = useFlag(flagKeys.storeTheme, flagDefaults.storeTheme);
   const theme = useMemo(() => createStoreTheme(storeThemeOf(servedTheme)), [servedTheme]);
   const limit = cartLimitOf(useFlag(flagKeys.maxCartItems, flagDefaults.maxCartItems));
-  const wide = useMediaQuery(theme.breakpoints.up('lg'));
+  // noSsr reads the real value on the first render, which decides whether the inspector starts open.
+  const wide = useMediaQuery(theme.breakpoints.up('lg'), { noSsr: true });
   const [lines, setLines] = useState<CartLine[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
-  const [inspectorOpen, setInspectorOpen] = useState(true);
+  // Docked beside the store on wide screens; on narrower ones it would cover the store, so it starts closed.
+  const [inspectorOpen, setInspectorOpen] = useState(wide);
   const [ordered, setOrdered] = useState(false);
   const count = cartCount(lines);
   const inspectorDocked = wide && inspectorOpen;
