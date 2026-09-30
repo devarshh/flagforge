@@ -82,9 +82,6 @@ public sealed class FlagEnvironmentConfig
     public bool References(string variationId) =>
         OffVariationId == variationId
         || Targets.Any(t => t.VariationId == variationId)
-        || Rules.Any(r => ServeReferences(r.Serve, variationId))
-        || ServeReferences(Fallthrough, variationId);
-
-    private static bool ServeReferences(Serve serve, string variationId) =>
-        serve.VariationId == variationId || (serve.Rollout?.Weights.Any(w => w.VariationId == variationId) ?? false);
+        || Rules.Any(r => r.Serve.References(variationId))
+        || Fallthrough.References(variationId);
 }

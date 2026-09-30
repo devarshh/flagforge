@@ -10,7 +10,7 @@ verify the current state (build + tests), and continue from the first unchecked 
 | 0 | Repository scaffolding, tooling configs, solution and empty projects, npm workspace, `.env.example`, `PROGRESS.md`, LICENSE, `git init` | `dotnet build` succeeds; `npm ci && npm run build` succeeds in `src/frontend` | [x] |
 | 1 | Evaluation engine and validator with full tests (§7) | Tests pass; coverage ≥95% | [x] |
 | 2 | Domain, Infrastructure, EF Core model and initial migration, Migrator with seed data | Against the Compose SQL Server: the migrator runs twice and the second run changes nothing | [x] |
-| 3 | ServiceDefaults and Management API with integration tests | Tests pass; `/scalar` lists every endpoint | [ ] |
+| 3 | ServiceDefaults and Management API with integration tests | Tests pass; `/scalar` lists every endpoint | [x] |
 | 4 | Evaluation API with integration tests | Tests pass | [ ] |
 | 5 | Worker with integration tests | Tests pass | [ ] |
 | 6 | SDK and React bindings with tests | Tests pass; package builds with types | [ ] |
@@ -23,8 +23,10 @@ verify the current state (build + tests), and continue from the first unchecked 
 
 ## Current state
 
-Phases 0–2 complete. Phase 2 checkpoint: migrator run twice against the Compose SQL Server; per-table row counts and
-checksums identical after the second run. Next: Phase 3 (ServiceDefaults and Management API).
+Phases 0–3 complete. Phase 3: 94 management API integration tests pass (Testcontainers SQL Server + Redis, Respawn,
+fake clock); the OpenAPI document lists all 45 operations (asserted by a test) and Scalar serves it at `/scalar`.
+Next: Phase 4 (evaluation API). Note: `dotnet test --solution` reports "zero tests" errors for the evaluation API and
+worker test projects until Phases 4–5 add their tests.
 
 ## Tooling (Phase 0 check, 2026-09-29, macOS arm64)
 
@@ -96,5 +98,36 @@ checksums identical after the second run. Next: Phase 3 (ServiceDefaults and Man
   (plan, email domain, beta) so the demo's "Shopping as" switcher visibly changes the store. Seeded variation and rule
   ids are fixed, readable values in the `v_`/`r_` + 6 character format.
 - **Migrator content root** is the app directory, so `dotnet run --project` works from any folder.
+
+- **Contracts and validators live in `FlagForge.Application/<Feature>/`** (`*Contracts.cs`, `*Validators.cs`, next
+  to the service), not in the API feature folders. The worker applies scheduled changes through the same services, so
+  one contract and one validation path serve both entry points; `ManagementApi/Features/<Feature>/` holds only the
+  endpoint group. FluentValidation checks request shape; `TargetingValidator` checks targeting semantics.
+- **Errors are exceptions mapped once** (`AppExceptionHandler` in ServiceDefaults): typed application exceptions
+  become 400/401/403/404/409 ProblemDetails; JSON binding failures (`ThrowOnBadRequest`) become 400 with the field path
+  (for example `config.rules[0].clauses[0].operator`); SQL duplicate-key races become 409.
+- **JSON enum values are camelCase** everywhere (`"type": "boolean"`, `"role": "admin"`, `"action": "turnOn"`,
+  operators `"in"`/`"endsWith"`); only evaluation reason kinds use the SDK format (`"RULE_MATCH"`).
+- **PATCH semantics:** null or missing fields are unchanged; an empty description clears it.
+- **Extra read endpoints** so every `201 Created` `Location` resolves: `GET /users/{id}`,
+  `GET /projects/{p}/environments/{e}`, `GET .../sdk-keys/{id}`, `GET .../scheduled-changes/{id}`. A release plan's
+  `Location` is the scheduled-changes collection.
+- **Creating a flag bumps and publishes every environment** of the project: the new key appears in evaluation output.
+- **Archiving a flag cancels its pending scheduled changes** (audited as `schedule.cancelled`); archived flags reject
+  targeting changes and new schedules with 409 until restored.
+- **Scheduled-change execution is exactly-once and ordered:** the executing transaction first flips
+  `Processing → Completed` for its own claim (the row lock blocks competing workers; a failure rolls it back), and a
+  change waits while an earlier open change exists for the same flag and environment, so release-plan steps apply in
+  order even when several are due at once.
+- **Auth details:** one generic 401 message for unknown email, wrong password, locked, and inactive accounts (with a
+  dummy hash check for unknown emails); refresh rotation is a conditional update, so of two concurrent refreshes only
+  one wins; a failed refresh also deletes the cookie; changing a password ends every other session; logout is
+  anonymous because it only needs the cookie; JWT lifetimes are validated against the injected `TimeProvider`.
+- **Login rate limit** is configurable (`RateLimiting__LoginPermitsPerMinute`, default 10).
+- **`lastEvaluatedAt` has hourly precision** (start of the latest usage hour). **FullyRolledOut** requires at least one
+  evaluation in the last 14 days; a flag evaluated 15–30 days ago and not since is not stale.
+- **Audit filters** resolve keys to ids (matching the indexes); a key that no longer exists matches nothing.
+- **ServiceDefaults adds `app.UseServiceDefaults()`** (forwarded headers, exception handler, status-code pages) because
+  middleware order matters; `MapDefaultEndpoints()` maps only the health endpoints.
 
 ## Unverified
