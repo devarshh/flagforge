@@ -1,0 +1,92 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: sqlserver
+  labels:
+    app.kubernetes.io/name: sqlserver
+spec:
+  # Headless: the StatefulSet's pod gets a stable name, and "sqlserver" resolves to it.
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: sqlserver
+  ports:
+    - name: sql
+      port: 1433
+      targetPort: sql
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: sqlserver
+  labels:
+    app.kubernetes.io/name: sqlserver
+    app.kubernetes.io/component: database
+spec:
+  serviceName: sqlserver
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sqlserver
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sqlserver
+        app.kubernetes.io/component: database
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        # The image's mssql user, by number, so Kubernetes can verify it is not root.
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: sqlserver
+          # SQL Server ships only for amd64 (on arm64 machines it runs under emulation).
+          image: mcr.microsoft.com/mssql/server:2022-latest
+          ports:
+            - name: sql
+              containerPort: 1433
+          env:
+            - name: ACCEPT_EULA
+              value: "Y"
+            - name: MSSQL_PID
+              value: Developer
+            - name: MSSQL_SA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: flagforge-secrets
+                  key: mssql-sa-password
+          resources:
+            requests:
+              cpu: 250m
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 3Gi
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -C -Q "SELECT 1" -b -o /dev/null
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              # sqlservr carries the cap_net_bind_service file capability, and the kernel refuses to run such a
+              # binary ("Operation not permitted") when the capability is outside the bounding set. With privilege
+              # escalation off, the process still never gains it. The restricted Pod Security Standard allows this.
+              add: ["NET_BIND_SERVICE"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/opt/mssql
+      volumes:
+        - name: data
+          emptyDir: {}

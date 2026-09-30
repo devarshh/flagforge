@@ -1,0 +1,15 @@
+# One HTTP listener for every FlagForge namespace; each namespace attaches its HTTPRoute.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: flagforge-gateway
+  namespace: flagforge-system
+spec:
+  gatewayClassName: envoy
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: All

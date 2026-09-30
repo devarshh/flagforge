@@ -17,7 +17,7 @@ verify the current state (build + tests), and continue from the first unchecked 
 | 7 | Dashboard with tests | Lint, typecheck, tests, and build pass; against locally running APIs you can sign in, create a flag, edit targeting, and save | [x] |
 | 8 | Demo app | Builds; connects to the local evaluation API and updates live when a flag changes | [x] |
 | 9 | Dockerfiles, Compose, gateway, smoke test, Makefile | `docker compose up --build -d` on a clean checkout, then the smoke test passes in full mode | [x] |
-| 10 | Kubernetes base, component, overlays, migrator Job, platform, kind scripts | Every kustomization validates (§20.6); if kind and helm are available, `scripts/k8s-local-up.sh --smoke` passes | [ ] |
+| 10 | Kubernetes base, component, overlays, migrator Job, platform, kind scripts | Every kustomization validates (§20.6); if kind and helm are available, `scripts/k8s-local-up.sh --smoke` passes | [x] |
 | 11 | Bicep, all GitHub workflows, Dependabot, PR template | `az bicep build` (if `az` is available) and `actionlint` pass | [ ] |
 | 12 | Documentation (§25), polish, and final verification | Run everything again from a clean state (backend tests, frontend tests, Compose smoke test, manifest validation); `PROGRESS.md` complete with Decisions and Unverified sections | [ ] |
 
@@ -33,9 +33,16 @@ gateway: security headers, immutable asset caching with gzip, `no-cache` HTML (i
 `/demo/`, the runtime `/demo/config.json`, 413 for bodies over 1 MB, and no warnings or errors in any service log. In
 a browser, the demo showed Live through the gateway and the dashboard's sign-in and cookie session restore worked.
 
+Phase 10 checkpoint: `scripts/k8s-validate.sh` validates every kustomization with kubeconform (local, preview, a
+preview rendered with a sample namespace, hostname, and images, aks, the migrator Job, and both platforms; no
+skipped resources). `scripts/k8s-local-up.sh --smoke` passed from scratch (new kind cluster, Envoy Gateway 1.9.2, SQL
+Server under Rosetta on the arm64 node, migrator, full smoke test through Envoy with FlagsChanged after 101 ms) and
+on a rerun against the existing cluster. A SignalR connection held idle for 390 s through Envoy stayed connected and
+still received FlagsChanged.
+
 Earlier manual checks: Phase 7 against the Compose SQL Server and Redis (sign in, create a flag, edit targeting,
 save, test panel, light mode, 360 px); Phase 8 through the demo's dev server (a flag change reached the page in
-702 ms; `identify` on shopper switch). Next: Phase 10 (Kubernetes and kind).
+702 ms; `identify` on shopper switch). Next: Phase 11 (Bicep, GitHub workflows, Dependabot, PR template).
 
 ## Tooling (Phase 0 check, 2026-09-29, macOS arm64)
 
@@ -243,5 +250,29 @@ save, test panel, light mode, 360 px); Phase 8 through the demo's dev server (a 
 - **`scripts/gen-dev-secrets.sh`** writes letters and digits only (no quoting needed), guarantees SQL Server's password
   complexity with fixed parts, refuses to overwrite `.env` without `--force`, and sets mode 600. The Makefile installs
   node modules only when they are missing.
+
+- **Envoy Gateway's chart installs the Gateway API CRDs** (experimental channel, bundle v1.6.1) together with its own,
+  so the scripts install no separate CRDs. The chart is pinned to 1.9.2.
+- **Numeric users for `runAsNonRoot`:** the SQL Server image runs as the named user `mssql` and Redis's image as root,
+  so their pods set the numeric IDs (10001; 999/1000). The .NET and nginx images already use numeric users.
+- **SQL Server keeps `NET_BIND_SERVICE`:** `sqlservr` carries that file capability, and the kernel refuses to execute
+  it ("Operation not permitted") when the capability is outside the bounding set. Its container drops ALL and adds
+  back only NET_BIND_SERVICE (allowed by the restricted Pod Security Standard); with privilege escalation off, the
+  process never actually gains it.
+- **amd64 SQL Server on arm64 kind nodes:** the script pulls the amd64 image on the host and loads it into the node,
+  where it runs under Docker Desktop's Rosetta emulation (binfmt_misc applies inside the kind node too).
+- **Reruns of `k8s-local-up.sh`** restart the Deployments (images keep the tag `local`) and delete a SQL Server pod that
+  is not ready once the StatefulSet has observed the new spec, because a StatefulSet never replaces a pod that never
+  became ready. First runs skip both.
+- **Hostnames and preview namespaces are not committed:** the workflows wrap an overlay in a generated kustomization
+  under the git-ignored `deploy/k8s/overlays/.generated/`, and `scripts/k8s-validate.sh` renders a preview the same way
+  with sample values. The migrator Job defaults to the `local` image tag; CD and previews set theirs.
+- **Base labels:** `app.kubernetes.io/part-of: flagforge` on every resource and pod template (not on selectors), and
+  `app.kubernetes.io/name` per workload. The SQL component sets the same label, because base labels do not reach
+  component resources.
+- **Probes:** .NET startup probes allow up to 10 minutes (120 x 5 s) on `/health/ready`, which stays unready until the
+  migrator has applied the migrations; nginx uses `/healthz`; Redis and SQL Server use exec probes.
+- **nginx images keep a writable root filesystem** (their entrypoint renders config templates at startup). The .NET
+  containers and Redis are read-only with `emptyDir` mounts (`/tmp`, `/data`).
 
 ## Unverified

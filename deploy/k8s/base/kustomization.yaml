@@ -1,0 +1,33 @@
+# Everything FlagForge runs in one namespace. Overlays set the namespace, image tags, replicas, and hostnames.
+# The Secret flagforge-secrets is not here: deploy scripts and workflows create it (keys: sql-connection-string,
+# jwt-signing-key, seed-admin-password, demo-user-password, demo-sdk-key, and mssql-sa-password for in-cluster SQL).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: flagforge
+    includeTemplates: true
+
+resources:
+  - configmap.yaml
+  - redis.yaml
+  - management-api.yaml
+  - evaluation-api.yaml
+  - worker.yaml
+  - dashboard.yaml
+  - demo.yaml
+  - httproute.yaml
+
+# Logical image names. Overlays point them at a registry and tag.
+images:
+  - name: flagforge/management-api
+    newName: flagforge/management-api
+  - name: flagforge/evaluation-api
+    newName: flagforge/evaluation-api
+  - name: flagforge/worker
+    newName: flagforge/worker
+  - name: flagforge/dashboard
+    newName: flagforge/dashboard
+  - name: flagforge/demo
+    newName: flagforge/demo

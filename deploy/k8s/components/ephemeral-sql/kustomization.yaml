@@ -1,0 +1,12 @@
+# SQL Server inside the namespace, for local and preview environments. Its data lives in an emptyDir, so it is
+# disposable by design: a restart loses the data and the migrator Job seeds it again.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: flagforge
+    includeTemplates: true
+
+resources:
+  - sqlserver.yaml

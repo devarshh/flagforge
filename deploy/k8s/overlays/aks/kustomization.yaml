@@ -1,0 +1,21 @@
+# Production on AKS. SQL is Azure SQL (its connection string is in flagforge-secrets). CD sets the ACR images with
+# `kustomize edit set image` and adds the hostname (flagforge.<gateway ip>.nip.io). The demo data is seeded because
+# this deployment is a public showcase.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: flagforge-prod
+
+resources:
+  - ../../base
+
+patches:
+  # The Gateway listens on plain HTTP (nip.io has no certificate). With TLS in front, remove this patch so the
+  # refresh cookie requires HTTPS (docs/azure-setup.md).
+  - patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: flagforge-config
+      data:
+        Auth__RefreshCookieSecure: "false"

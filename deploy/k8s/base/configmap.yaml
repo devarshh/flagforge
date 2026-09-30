@@ -1,0 +1,12 @@
+# Settings that are not secret. Secrets come from flagforge-secrets.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flagforge-config
+data:
+  Redis__ConnectionString: redis:6379
+  # Overlays served over plain HTTP set this to "false"; keep "true" wherever TLS terminates in front of FlagForge.
+  Auth__RefreshCookieSecure: "true"
+  Cors__AllowedOrigins: ""
+  FF_SEED_ADMIN_EMAIL: admin@flagforge.local
+  FF_SEED_DEMO_DATA: "true"

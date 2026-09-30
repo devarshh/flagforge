@@ -1,0 +1,9 @@
+# Cluster-wide gateway plumbing for AKS, applied by the bootstrap-cluster workflow after Envoy Gateway is installed.
+# Envoy's default LoadBalancer Service gets a public IP, which the workflows turn into nip.io hostnames.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - gatewayclass.yaml
+  - gateway.yaml

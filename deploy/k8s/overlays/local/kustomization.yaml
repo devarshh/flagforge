@@ -1,0 +1,57 @@
+# kind on a developer machine (scripts/k8s-local-up.sh): in-cluster SQL Server, one replica of everything, images
+# built locally and loaded into kind with the tag "local" (so the default imagePullPolicy is IfNotPresent).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: flagforge
+
+resources:
+  - ../../base
+
+components:
+  - ../../components/ephemeral-sql
+
+images:
+  - name: flagforge/management-api
+    newTag: local
+  - name: flagforge/evaluation-api
+    newTag: local
+  - name: flagforge/worker
+    newTag: local
+  - name: flagforge/dashboard
+    newTag: local
+  - name: flagforge/demo
+    newTag: local
+
+replicas:
+  - name: management-api
+    count: 1
+  - name: evaluation-api
+    count: 1
+  - name: dashboard
+    count: 1
+  - name: demo
+    count: 1
+
+patches:
+  # kind has no metrics server, so an HPA could never scale, and one replica cannot satisfy the PDB.
+  - patch: |-
+      $patch: delete
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: evaluation-api
+  - patch: |-
+      $patch: delete
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata:
+        name: evaluation-api
+  # http://localhost:8090 is plain HTTP, so the refresh cookie cannot require HTTPS.
+  - patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: flagforge-config
+      data:
+        Auth__RefreshCookieSecure: "false"

@@ -1,0 +1,39 @@
+# One origin, routed by path with no rewriting (the same routes as the Compose gateway). Overlays add hostnames.
+# WebSocket upgrades for /sdk/hubs/ pass through Envoy Gateway without extra configuration.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: flagforge
+spec:
+  parentRefs:
+    - name: flagforge-gateway
+      namespace: flagforge-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+      backendRefs:
+        - name: management-api
+          port: 80
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /sdk
+      backendRefs:
+        - name: evaluation-api
+          port: 80
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /demo
+      backendRefs:
+        - name: demo
+          port: 80
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: dashboard
+          port: 80
