@@ -8,7 +8,8 @@ public sealed record RetentionSummary(int UsageRows, int AuditEntries, int Refre
 
 /// <summary>
 /// Deletes usage older than <c>Retention__UsageDays</c>, audit entries older than <c>Retention__AuditDays</c>, and
-/// refresh tokens that expired more than 7 days ago, in batches of 5,000 so no statement holds locks for long.
+/// refresh tokens that expired more than 7 days ago, oldest first in batches of 5,000 so no statement holds locks for
+/// long. Each batch is ordered by the indexed cutoff column, which also keeps the batches deterministic.
 /// </summary>
 public sealed class RetentionCleanup(IFlagForgeDbContext db, TimeProvider timeProvider, IOptions<RetentionOptions> options)
 {
@@ -22,12 +23,12 @@ public sealed class RetentionCleanup(IFlagForgeDbContext db, TimeProvider timePr
         var auditCutoff = now.AddDays(-options.Value.AuditDays);
         var tokenCutoff = now - ExpiredRefreshTokenGrace;
         return new RetentionSummary(
-            await DeleteInBatchesAsync(db.FlagUsageHourly.Where(u => u.HourStart < usageCutoff), cancellationToken),
-            await DeleteInBatchesAsync(db.AuditEntries.Where(a => a.OccurredAt < auditCutoff), cancellationToken),
-            await DeleteInBatchesAsync(db.RefreshTokens.Where(t => t.ExpiresAt < tokenCutoff), cancellationToken));
+            await DeleteInBatchesAsync(db.FlagUsageHourly.Where(u => u.HourStart < usageCutoff).OrderBy(u => u.HourStart), cancellationToken),
+            await DeleteInBatchesAsync(db.AuditEntries.Where(a => a.OccurredAt < auditCutoff).OrderBy(a => a.OccurredAt), cancellationToken),
+            await DeleteInBatchesAsync(db.RefreshTokens.Where(t => t.ExpiresAt < tokenCutoff).OrderBy(t => t.ExpiresAt), cancellationToken));
     }
 
-    private static async Task<int> DeleteInBatchesAsync<T>(IQueryable<T> expired, CancellationToken cancellationToken)
+    private static async Task<int> DeleteInBatchesAsync<T>(IOrderedQueryable<T> expired, CancellationToken cancellationToken)
     {
         var total = 0;
         int deleted;
