@@ -12,7 +12,7 @@ verify the current state (build + tests), and continue from the first unchecked 
 | 2 | Domain, Infrastructure, EF Core model and initial migration, Migrator with seed data | Against the Compose SQL Server: the migrator runs twice and the second run changes nothing | [x] |
 | 3 | ServiceDefaults and Management API with integration tests | Tests pass; `/scalar` lists every endpoint | [x] |
 | 4 | Evaluation API with integration tests | Tests pass | [x] |
-| 5 | Worker with integration tests | Tests pass | [ ] |
+| 5 | Worker with integration tests | Tests pass | [x] |
 | 6 | SDK and React bindings with tests | Tests pass; package builds with types | [ ] |
 | 7 | Dashboard with tests | Lint, typecheck, tests, and build pass; against locally running APIs you can sign in, create a flag, edit targeting, and save | [ ] |
 | 8 | Demo app | Builds; connects to the local evaluation API and updates live when a flag changes | [ ] |
@@ -23,10 +23,8 @@ verify the current state (build + tests), and continue from the first unchecked 
 
 ## Current state
 
-Phases 0–4 complete. Phase 4: 19 evaluation API tests pass (SignalR over TestServer WebSockets with skipped
-negotiation, Redis-driven invalidation, revocation, TTL safety net, usage flush, 429, CORS, 32 KB body limit on real
-Kestrel, and "no SDK keys in logs" at Trace level). Next: Phase 5 (worker). `dotnet test --solution` still reports a
-"zero tests" error for the worker test project until Phase 5.
+Phases 0–5 complete. The backend is done: 366 tests pass across the solution (245 evaluation unit tests, 94 management
+API, 19 evaluation API, and 8 worker integration tests). Next: Phase 6 (JavaScript SDK and React bindings).
 
 ## Tooling (Phase 0 check, 2026-09-29, macOS arm64)
 
@@ -150,5 +148,12 @@ Kestrel, and "no SDK keys in logs" at Trace level). Next: Phase 5 (worker). `dot
   instrumentation redacts query values by default.
 - **Body-limit test uses real Kestrel** (.NET 10 `WebApplicationFactory.UseKestrel()`), because the in-memory
   TestServer does not apply `MaxRequestBodySize`.
+
+- **Worker jobs** share a `PeriodicJob` base: run once at startup, then on every `PeriodicTimer` tick of the injected
+  clock, with a fresh DI scope per run; exceptions are logged and the loop continues. Each claimed change executes in
+  its own scope, and a failure is recorded from yet another scope so half-applied tracked entities never leak.
+  Claims last 5 minutes (`ClaimedUntil`), after which another replica may reclaim the change.
+- **Worker tests drive processing directly:** the test host removes the periodic jobs so "two processors in parallel"
+  is deterministic; one test keeps them and advances the fake clock to prove the real timer path executes changes.
 
 ## Unverified

@@ -25,6 +25,7 @@ public sealed class FlagForgeFixture : IAsyncLifetime
     private Respawner? _respawner;
     private ManagementApiFactory? _managementApi;
     private EvaluationApiFactory? _evaluationApi;
+    private WorkerFactory? _worker;
 
     /// <summary>Starts at the real current time and only moves forward.</summary>
     public FakeTimeProvider Time { get; } = new(TimeProvider.System.GetUtcNow());
@@ -36,6 +37,8 @@ public sealed class FlagForgeFixture : IAsyncLifetime
     public ManagementApiFactory ManagementApi => _managementApi ??= Track(new ManagementApiFactory(this));
 
     public EvaluationApiFactory EvaluationApi => _evaluationApi ??= Track(new EvaluationApiFactory(this));
+
+    public WorkerFactory Worker => _worker ??= Track(new WorkerFactory(this));
 
     public async ValueTask InitializeAsync()
     {
