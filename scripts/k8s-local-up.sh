@@ -150,25 +150,7 @@ step "Waiting for SQL Server"
 k rollout status statefulset/sqlserver --namespace "$namespace" --timeout=10m
 
 step "Running the migrator"
-k delete job flagforge-migrator --namespace "$namespace" --ignore-not-found --wait=true
-k apply -k deploy/k8s/jobs/migrator --namespace "$namespace"
-deadline=$((SECONDS + 600))
-while true; do
-  succeeded="$(k get job flagforge-migrator --namespace "$namespace" -o jsonpath='{.status.succeeded}')"
-  failed="$(k get job flagforge-migrator --namespace "$namespace" -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}')"
-  if [[ "$succeeded" == "1" ]]; then
-    break
-  fi
-
-  if [[ "$failed" == "True" || $SECONDS -gt $deadline ]]; then
-    echo "The migrator Job did not complete. Its logs:" >&2
-    k logs job/flagforge-migrator --namespace "$namespace" --all-containers --tail=200 >&2 || true
-    exit 1
-  fi
-
-  sleep 5
-done
-k logs job/flagforge-migrator --namespace "$namespace" --tail=20
+KUBECTL_CONTEXT="$context" scripts/k8s-run-migrator.sh "$namespace"
 
 step "Waiting for the deployments"
 for deployment in redis management-api evaluation-api worker dashboard demo; do

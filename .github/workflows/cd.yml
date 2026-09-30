@@ -1,0 +1,183 @@
+# Deploys main to AKS: runs CI, pushes images tagged sha-<commit>, migrates the database, rolls out the aks overlay
+# (rolling back a Deployment whose rollout fails), and smoke-tests the result read-only. Skips with a notice until
+# Azure is set up (docs/azure-setup.md).
+name: cd
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-production
+  cancel-in-progress: false
+
+jobs:
+  config-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - name: Check the Azure configuration
+        id: check
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+        run: |
+          echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          if [[ -z "$AZURE_CLIENT_ID" ]]; then
+            echo "::notice title=CD skipped::Azure is not configured. Follow docs/azure-setup.md to deploy from main."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  ci:
+    needs: config-check
+    if: needs.config-check.outputs.configured == 'true'
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+      id-token: write
+
+  images:
+    needs: [config-check, ci]
+    uses: ./.github/workflows/_build-images.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      push: true
+      tag: ${{ needs.config-check.outputs.tag }}
+
+  deploy:
+    needs: [config-check, images]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: ${{ steps.summary.outputs.url }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      NAMESPACE: flagforge-prod
+      TAG: ${{ needs.config-check.outputs.tag }}
+      ACR_NAME: ${{ vars.ACR_NAME }}
+      AKS_NAME: ${{ vars.AKS_NAME }}
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: azure/setup-kubectl@v5
+        with:
+          version: v1.37.1
+
+      - uses: ./.github/actions/install-tools
+        with:
+          kustomize: "true"
+
+      - name: Connect to the cluster
+        run: az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$AKS_NAME" --overwrite-existing
+
+      - name: Find the gateway address
+        id: gateway
+        run: |
+          ip="$(kubectl get gateway flagforge-gateway -n flagforge-system -o jsonpath='{.status.addresses[0].value}' 2> /dev/null || true)"
+          if [[ -z "$ip" ]]; then
+            echo "::error title=No gateway address::The Gateway flagforge-gateway has no address. Run the bootstrap-cluster workflow first (docs/azure-setup.md)."
+            exit 1
+          fi
+          echo "host=flagforge.$ip.nip.io" >> "$GITHUB_OUTPUT"
+
+      - name: Namespace and Secret
+        env:
+          SQL_CONNECTION_STRING: ${{ secrets.SQL_CONNECTION_STRING }}
+          JWT_SIGNING_KEY: ${{ secrets.JWT_SIGNING_KEY }}
+          SEED_ADMIN_PASSWORD: ${{ secrets.SEED_ADMIN_PASSWORD }}
+          DEMO_USER_PASSWORD: ${{ secrets.DEMO_USER_PASSWORD }}
+          DEMO_SDK_KEY: ${{ secrets.DEMO_SDK_KEY }}
+        run: |
+          kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic flagforge-secrets --namespace "$NAMESPACE" \
+            --from-literal=sql-connection-string="$SQL_CONNECTION_STRING" \
+            --from-literal=jwt-signing-key="$JWT_SIGNING_KEY" \
+            --from-literal=seed-admin-password="$SEED_ADMIN_PASSWORD" \
+            --from-literal=demo-user-password="$DEMO_USER_PASSWORD" \
+            --from-literal=demo-sdk-key="$DEMO_SDK_KEY" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Set images and hostname
+        env:
+          HOST: ${{ steps.gateway.outputs.host }}
+        run: |
+          registry="$ACR_NAME.azurecr.io/flagforge"
+          (
+            cd deploy/k8s/overlays/aks
+            for image in management-api evaluation-api worker dashboard demo; do
+              kustomize edit set image "flagforge/$image=$registry/$image:$TAG"
+            done
+          )
+          (cd deploy/k8s/jobs/migrator && kustomize edit set image "flagforge/migrator=$registry/migrator:$TAG")
+          scripts/k8s-generate-overlay.sh aks production --hostname "$HOST"
+
+      - name: Migrate the database
+        run: scripts/k8s-run-migrator.sh "$NAMESPACE" 300
+
+      - name: Deploy
+        run: |
+          kubectl apply -k deploy/k8s/overlays/.generated/production
+          failed=0
+          for deployment in redis management-api evaluation-api worker dashboard demo; do
+            if ! kubectl rollout status "deployment/$deployment" --namespace "$NAMESPACE" --timeout=300s; then
+              echo "::error title=Rollout failed::$deployment did not become ready; rolling it back."
+              kubectl rollout undo "deployment/$deployment" --namespace "$NAMESPACE"
+              failed=1
+            fi
+          done
+          exit "$failed"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: tests/smoke/package-lock.json
+
+      - name: Smoke test (read-only)
+        working-directory: tests/smoke
+        env:
+          BASE_URL: http://${{ steps.gateway.outputs.host }}
+          SMOKE_MODE: readonly
+          DEMO_SDK_KEY: ${{ secrets.DEMO_SDK_KEY }}
+        run: |
+          npm ci
+          npm run smoke
+
+      - name: Summary
+        id: summary
+        env:
+          HOST: ${{ steps.gateway.outputs.host }}
+        run: |
+          echo "url=http://$HOST" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Deployed to production"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Dashboard | http://$HOST |"
+            echo "| Demo store | http://$HOST/demo/ |"
+            echo "| Image tag | \`$TAG\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

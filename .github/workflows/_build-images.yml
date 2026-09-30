@@ -1,0 +1,102 @@
+# Builds the six container images. CI builds them to check the Dockerfiles (push: false); CD and previews push them
+# to the Azure Container Registry as <registry>/flagforge/<image>:<tag> (and :main from main).
+name: build-images
+
+on:
+  workflow_call:
+    inputs:
+      push:
+        description: Push the images to the registry.
+        type: boolean
+        required: true
+      tag:
+        description: The image tag, for example sha-1a2b3c4 or pr-42-1a2b3c4.
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # azure/login through OpenID Connect when pushing
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: management-api
+            context: .
+            file: src/backend/FlagForge.ManagementApi/Dockerfile
+          - image: evaluation-api
+            context: .
+            file: src/backend/FlagForge.EvaluationApi/Dockerfile
+          - image: worker
+            context: .
+            file: src/backend/FlagForge.Worker/Dockerfile
+          - image: migrator
+            context: .
+            file: src/backend/FlagForge.Migrator/Dockerfile
+          - image: dashboard
+            context: src/frontend
+            file: src/frontend/apps/dashboard/Dockerfile
+          - image: demo
+            context: src/frontend
+            file: src/frontend/apps/demo/Dockerfile
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Image names
+        id: names
+        env:
+          PUSH: ${{ inputs.push }}
+          TAG: ${{ inputs.tag }}
+          IMAGE: ${{ matrix.image }}
+          ACR_NAME: ${{ vars.ACR_NAME }}
+          COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [[ "$PUSH" == "true" ]]; then
+            repository="$ACR_NAME.azurecr.io/flagforge/$IMAGE"
+          else
+            repository="flagforge/$IMAGE"
+          fi
+          tags="$repository:$TAG"
+          if [[ "$PUSH" == "true" && "$GITHUB_REF" == "refs/heads/main" && "$GITHUB_EVENT_NAME" != "pull_request" ]]; then
+            tags="$tags,$repository:main"
+          fi
+          {
+            echo "tags=$tags"
+            echo "commit=${COMMIT::7}"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Sign in to Azure
+        if: inputs.push
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign in to the registry
+        if: inputs.push
+        env:
+          ACR_NAME: ${{ vars.ACR_NAME }}
+        run: az acr login --name "$ACR_NAME"
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: ${{ inputs.push }}
+          tags: ${{ steps.names.outputs.tags }}
+          build-args: |
+            APP_VERSION=${{ inputs.tag }}
+            APP_COMMIT=${{ steps.names.outputs.commit }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

@@ -1,0 +1,237 @@
+# A preview environment per pull request: namespace ff-pr-<number> with its own SQL Server, served at
+# http://pr-<number>.<gateway ip>.nip.io and smoke-tested in full. Closing the pull request deletes it. Runs only for
+# pull requests from this repository (forks cannot use its Azure credentials) once Azure is set up.
+name: preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  config-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - name: Check the Azure configuration and the pull request's origin
+        id: check
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          echo "tag=pr-$PR_NUMBER-${HEAD_SHA::7}" >> "$GITHUB_OUTPUT"
+          if [[ -z "$AZURE_CLIENT_ID" ]]; then
+            echo "::notice title=Preview skipped::Azure is not configured (docs/azure-setup.md)."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ]]; then
+            echo "::notice title=Preview skipped::Pull requests from forks get no preview."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  images:
+    needs: config-check
+    if: needs.config-check.outputs.enabled == 'true' && github.event.action != 'closed'
+    uses: ./.github/workflows/_build-images.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      push: true
+      tag: ${{ needs.config-check.outputs.tag }}
+
+  deploy:
+    needs: [config-check, images]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      NAMESPACE: ff-pr-${{ github.event.pull_request.number }}
+      TAG: ${{ needs.config-check.outputs.tag }}
+      ACR_NAME: ${{ vars.ACR_NAME }}
+      AKS_NAME: ${{ vars.AKS_NAME }}
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: azure/setup-kubectl@v5
+        with:
+          version: v1.37.1
+
+      - uses: ./.github/actions/install-tools
+        with:
+          kustomize: "true"
+
+      - name: Connect to the cluster
+        run: az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$AKS_NAME" --overwrite-existing
+
+      - name: Find the gateway address
+        id: gateway
+        run: |
+          ip="$(kubectl get gateway flagforge-gateway -n flagforge-system -o jsonpath='{.status.addresses[0].value}' 2> /dev/null || true)"
+          if [[ -z "$ip" ]]; then
+            echo "::error title=No gateway address::Run the bootstrap-cluster workflow first (docs/azure-setup.md)."
+            exit 1
+          fi
+          echo "host=pr-$PR_NUMBER.$ip.nip.io" >> "$GITHUB_OUTPUT"
+
+      - name: Namespace and Secret
+        env:
+          SEED_ADMIN_PASSWORD: ${{ secrets.SEED_ADMIN_PASSWORD }}
+          DEMO_USER_PASSWORD: ${{ secrets.DEMO_USER_PASSWORD }}
+          DEMO_SDK_KEY: ${{ secrets.DEMO_SDK_KEY }}
+        run: |
+          kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl label namespace "$NAMESPACE" flagforge/preview=true "flagforge/pr=$PR_NUMBER" --overwrite
+
+          # The SA password and signing key are generated on the first deploy and kept afterwards.
+          if kubectl get secret flagforge-secrets --namespace "$NAMESPACE" > /dev/null 2>&1; then
+            sa_password="$(kubectl get secret flagforge-secrets --namespace "$NAMESPACE" -o jsonpath='{.data.mssql-sa-password}' | base64 --decode)"
+            jwt_signing_key="$(kubectl get secret flagforge-secrets --namespace "$NAMESPACE" -o jsonpath='{.data.jwt-signing-key}' | base64 --decode)"
+          else
+            sa_password="Pr-$(openssl rand -hex 16)-9"
+            jwt_signing_key="$(openssl rand -base64 48)"
+          fi
+          echo "::add-mask::$sa_password"
+          echo "::add-mask::$jwt_signing_key"
+
+          kubectl create secret generic flagforge-secrets --namespace "$NAMESPACE" \
+            --from-literal=sql-connection-string="Server=sqlserver,1433;Database=flagforge;User Id=sa;Password=$sa_password;TrustServerCertificate=True" \
+            --from-literal=mssql-sa-password="$sa_password" \
+            --from-literal=jwt-signing-key="$jwt_signing_key" \
+            --from-literal=seed-admin-password="$SEED_ADMIN_PASSWORD" \
+            --from-literal=demo-user-password="$DEMO_USER_PASSWORD" \
+            --from-literal=demo-sdk-key="$DEMO_SDK_KEY" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Set images and hostname
+        env:
+          HOST: ${{ steps.gateway.outputs.host }}
+        run: |
+          registry="$ACR_NAME.azurecr.io/flagforge"
+          (
+            cd deploy/k8s/overlays/preview
+            for image in management-api evaluation-api worker dashboard demo; do
+              kustomize edit set image "flagforge/$image=$registry/$image:$TAG"
+            done
+          )
+          (cd deploy/k8s/jobs/migrator && kustomize edit set image "flagforge/migrator=$registry/migrator:$TAG")
+          scripts/k8s-generate-overlay.sh preview "pr-$PR_NUMBER" --namespace "$NAMESPACE" --hostname "$HOST"
+
+      - name: Deploy
+        run: |
+          kubectl apply -k "deploy/k8s/overlays/.generated/pr-$PR_NUMBER"
+          kubectl rollout status statefulset/sqlserver --namespace "$NAMESPACE" --timeout=10m
+          scripts/k8s-run-migrator.sh "$NAMESPACE" 600
+          for deployment in redis management-api evaluation-api worker dashboard demo; do
+            kubectl rollout status "deployment/$deployment" --namespace "$NAMESPACE" --timeout=300s
+          done
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: tests/smoke/package-lock.json
+
+      - name: Smoke test
+        working-directory: tests/smoke
+        env:
+          BASE_URL: http://${{ steps.gateway.outputs.host }}
+          SMOKE_MODE: full
+          ADMIN_PASSWORD: ${{ secrets.SEED_ADMIN_PASSWORD }}
+          DEMO_SDK_KEY: ${{ secrets.DEMO_SDK_KEY }}
+        run: |
+          npm ci
+          npm run smoke
+
+      - name: Comment on the pull request
+        uses: actions/github-script@v9
+        env:
+          URL: http://${{ steps.gateway.outputs.host }}
+          COMMIT: ${{ github.event.pull_request.head.sha }}
+        with:
+          script: |
+            const upsert = require('./.github/scripts/preview-comment.cjs');
+            await upsert({ github, context }, [
+              '### Preview',
+              '',
+              '| | |',
+              '|---|---|',
+              `| Dashboard | ${process.env.URL} |`,
+              `| Demo store | ${process.env.URL}/demo/ |`,
+              `| Commit | ${process.env.COMMIT} |`,
+              '',
+              'Sign in as `admin@flagforge.local` with the password in the `SEED_ADMIN_PASSWORD` repository secret.',
+            ].join('\n'));
+
+  cleanup:
+    needs: config-check
+    if: needs.config-check.outputs.enabled == 'true' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      ACR_NAME: ${{ vars.ACR_NAME }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: azure/setup-kubectl@v5
+        with:
+          version: v1.37.1
+
+      - name: Delete the namespace
+        env:
+          AKS_NAME: ${{ vars.AKS_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$AKS_NAME" --overwrite-existing
+          kubectl delete namespace "ff-pr-$PR_NUMBER" --wait=false --ignore-not-found
+
+      - name: Delete the pull request's images
+        run: |
+          for image in management-api evaluation-api worker migrator dashboard demo; do
+            tags="$(az acr repository show-tags --name "$ACR_NAME" --repository "flagforge/$image" \
+              --query "[?starts_with(@, 'pr-$PR_NUMBER-')]" --output tsv 2> /dev/null || true)"
+            for tag in $tags; do
+              az acr repository delete --name "$ACR_NAME" --image "flagforge/$image:$tag" --yes
+            done
+          done
+
+      - name: Update the comment
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const upsert = require('./.github/scripts/preview-comment.cjs');
+            await upsert({ github, context }, '### Preview\n\nThe preview was deleted when the pull request closed.');

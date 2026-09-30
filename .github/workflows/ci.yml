@@ -1,0 +1,189 @@
+# Checks every change: backend (format, build, tests, coverage), frontend (lint, types, tests, build), manifests and
+# infrastructure (kubeconform, Bicep, actionlint), container images, and an end-to-end smoke test on Docker Compose.
+# ci-ok is the single required status check. CD calls this workflow so only commits that pass are deployed.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  # github.workflow is the caller's name when CD calls this workflow, so the two runs for a push to main do not
+  # cancel each other.
+  group: ${{ github.workflow }}-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('global.json', 'Directory.Packages.props', '**/*.csproj', 'dotnet-tools.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore tools
+        run: dotnet tool restore
+
+      - name: Check formatting
+        run: dotnet format FlagForge.slnx --verify-no-changes
+
+      - name: Build
+        run: dotnet build FlagForge.slnx -c Release
+
+      # The integration tests start SQL Server and Redis with Testcontainers on the runner's Docker.
+      - name: Test
+        run: |
+          set -o pipefail
+          dotnet test --solution FlagForge.slnx -c Release --no-build --results-directory TestResults \
+            --report-xunit-trx --coverage --coverage-output-format cobertura | tee test-output.txt
+
+      - name: Check coverage of FlagForge.Evaluation (at least 95%)
+        run: scripts/check-coverage.sh 'TestResults/**/*.cobertura.xml' FlagForge.Evaluation 95 TestResults/coverage-report
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "## Backend tests"
+            echo '```'
+            grep -E "^Test run summary|^  (total|failed|succeeded|skipped):" test-output.txt || echo "No test summary (see the logs)."
+            echo '```'
+            if [[ -f TestResults/coverage-report/SummaryGithub.md ]]; then
+              cat TestResults/coverage-report/SummaryGithub.md
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: backend-test-results
+          path: TestResults
+          if-no-files-found: ignore
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: src/frontend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: src/frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  manifests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/install-tools
+        with:
+          kubeconform: "true"
+          actionlint: "true"
+
+      - uses: azure/setup-kubectl@v5
+        with:
+          version: v1.37.1
+
+      - name: Validate Kubernetes manifests
+        run: scripts/k8s-validate.sh
+
+      - name: Build Bicep
+        run: |
+          az bicep install
+          az bicep build --file infra/main.bicep --stdout > /dev/null
+
+      - name: Lint workflows
+        run: actionlint
+
+  images:
+    uses: ./.github/workflows/_build-images.yml
+    permissions:
+      contents: read
+      id-token: write # requested by the reusable workflow; CI builds without pushing
+    with:
+      push: false
+      tag: ci-${{ github.run_id }}
+
+  smoke:
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: tests/smoke/package-lock.json
+
+      # No .env: Compose uses its development defaults, like a fresh clone.
+      - name: Start the stack
+        run: docker compose up --build -d
+
+      - name: Smoke test
+        working-directory: tests/smoke
+        run: |
+          npm ci
+          npm run typecheck
+          npm run smoke
+
+      - name: Save logs
+        if: failure()
+        run: docker compose logs --no-color > compose-logs.txt
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: compose-logs
+          path: compose-logs.txt
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose down -v
+
+  ci-ok:
+    needs: [backend, frontend, manifests, images, smoke]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check results
+        env:
+          FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}
+        run: |
+          if [[ "$FAILED" == "true" ]]; then
+            echo "::error::A required job failed, was cancelled, or was skipped."
+            exit 1
+          fi
+          echo "All CI jobs passed."

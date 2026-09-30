@@ -18,7 +18,7 @@ verify the current state (build + tests), and continue from the first unchecked 
 | 8 | Demo app | Builds; connects to the local evaluation API and updates live when a flag changes | [x] |
 | 9 | Dockerfiles, Compose, gateway, smoke test, Makefile | `docker compose up --build -d` on a clean checkout, then the smoke test passes in full mode | [x] |
 | 10 | Kubernetes base, component, overlays, migrator Job, platform, kind scripts | Every kustomization validates (§20.6); if kind and helm are available, `scripts/k8s-local-up.sh --smoke` passes | [x] |
-| 11 | Bicep, all GitHub workflows, Dependabot, PR template | `az bicep build` (if `az` is available) and `actionlint` pass | [ ] |
+| 11 | Bicep, all GitHub workflows, Dependabot, PR template | `az bicep build` (if `az` is available) and `actionlint` pass | [x] |
 | 12 | Documentation (§25), polish, and final verification | Run everything again from a clean state (backend tests, frontend tests, Compose smoke test, manifest validation); `PROGRESS.md` complete with Decisions and Unverified sections | [ ] |
 
 ## Current state
@@ -40,9 +40,14 @@ Server under Rosetta on the arm64 node, migrator, full smoke test through Envoy 
 on a rerun against the existing cluster. A SignalR connection held idle for 390 s through Envoy stayed connected and
 still received FlagsChanged.
 
+Phase 11 checkpoint: `az bicep build --file infra/main.bicep` and `bicep lint` pass with no warnings (every API
+version has Bicep types, so properties are validated), `bicep build-params` resolves `main.bicepparam`, and
+`actionlint` passes on all six workflows with shellcheck checking their scripts. `kustomize edit set image` was
+exercised on a copy of the manifests the way CD runs it.
+
 Earlier manual checks: Phase 7 against the Compose SQL Server and Redis (sign in, create a flag, edit targeting,
 save, test panel, light mode, 360 px); Phase 8 through the demo's dev server (a flag change reached the page in
-702 ms; `identify` on shopper switch). Next: Phase 11 (Bicep, GitHub workflows, Dependabot, PR template).
+702 ms; `identify` on shopper switch). Next: Phase 12 (documentation, polish, and final verification).
 
 ## Tooling (Phase 0 check, 2026-09-29, macOS arm64)
 
@@ -57,6 +62,9 @@ save, test panel, light mode, 360 px); Phase 8 through the demo's dev server (a 
 | az | 2.90.0 | |
 | actionlint | 1.7.12 | Downloaded to `./.tools/` (checksum verified) |
 | kubeconform | 0.8.0 | Downloaded to `./.tools/` (checksum verified) |
+| shellcheck | 0.11.0 | Downloaded to `./.tools/` in Phase 11 (checksum verified); lets local actionlint check scripts like CI |
+| kustomize | 5.8.2 | Downloaded to `./.tools/` in Phase 11 (checksum verified); CI pins the same version |
+| Bicep CLI | 0.47.16 | Installed with `az bicep install` (in `~/.azure/bin`) in Phase 11 |
 
 ## Decisions
 
@@ -275,4 +283,39 @@ save, test panel, light mode, 360 px); Phase 8 through the demo's dev server (a 
 - **nginx images keep a writable root filesystem** (their entrypoint renders config templates at startup). The .NET
   containers and Redis are read-only with `emptyDir` mounts (`/tmp`, `/data`).
 
+- **Bicep API versions** are the newest stable versions the Bicep CLI (0.47.16) has types for: AKS 2026-05-01, SQL
+  2025-01-01, ACR 2025-11-01, managed identity 2024-11-30, role assignments 2022-04-01. So `bicep build` validates
+  every property (a probe confirmed unknown properties raise BCP037).
+- **Azure SQL free offer:** API 2025-01-01 has `useFreeLimit` and `freeLimitExhaustionBehavior`, so the database uses
+  the free offer with `AutoPause`. A subscription has one free database, so `sqlUseFreeLimit` (default true) lets a
+  deployment opt out. The database is serverless GP Gen5 (0.5 to 2 vCores, auto-pause 60 min, 32 GB).
+- **GitHub identity roles** (each on one resource): AcrPush, AcrDelete (preview tag cleanup), and Reader on the
+  registry, because `az acr login` and `az acr repository` resolve the registry through Azure Resource Manager; the
+  AKS Cluster User Role covers `az aks get-credentials` (it includes the cluster read and user-credential actions).
+- **`main.bicepparam` reads everything deployment-specific from the environment** (`readEnvironmentVariable`), and
+  `scripts/azure-deploy-infra.sh` prints `gh` commands that reference `$SQL_ADMIN_PASSWORD` or generate the other
+  secrets when run, so no secret value is ever printed.
+- **Workflow tooling:** kubeconform, actionlint, and kustomize are downloaded at pinned versions and checked against
+  pinned SHA-256 sums (`.github/actions/install-tools`); kubectl and Helm use `azure/setup-kubectl` and
+  `azure/setup-helm` with pinned versions. No third-party actions are used, so no SHA pins are needed.
+- **Shared deploy steps are scripts:** `scripts/k8s-run-migrator.sh` (local, CD, previews) and
+  `scripts/k8s-generate-overlay.sh` (CD, previews, validation). The sticky preview comment is one CommonJS helper
+  (`.github/scripts/preview-comment.cjs`) loaded by `actions/github-script`.
+- **CI concurrency** includes `github.workflow`, which is the caller's name when CD calls CI, so a push to main does not
+  cancel its own CD run; only pull request runs cancel in progress. CI requests `id-token: write` for the image build
+  because the reusable workflow's job needs it when pushing; CI never pushes.
+- **Coverage and results** use the xUnit v3 test platform options (`--report-xunit-trx`, `--coverage
+  --coverage-output-format cobertura`); `scripts/check-coverage.sh` enforces 95% for FlagForge.Evaluation and writes
+  the summary shown in the job summary.
+- **The preview janitor deletes a namespace only when the pull request is CLOSED or MERGED**; an unreadable state keeps
+  the preview and logs a warning.
+
 ## Unverified
+
+- **GitHub workflows have never run.** The repository has no remote, so CI, CD, previews, the janitor, the bootstrap
+  workflow, and Dependabot were checked only statically (actionlint with shellcheck). Their building blocks were run
+  locally: the Compose smoke test, `scripts/k8s-validate.sh`, `scripts/check-coverage.sh`, the xUnit report options,
+  `kustomize edit set image`, and the migrator and overlay scripts (through the kind deployment).
+- **Nothing was deployed to Azure.** The Bicep builds and lints cleanly, but `scripts/azure-deploy-infra.sh`, the
+  role assignments (including whether Reader is needed for `az acr login` with AcrPush), the free-offer settings, and
+  the AKS deployment have not run against a subscription.

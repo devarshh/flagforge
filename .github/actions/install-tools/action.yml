@@ -1,0 +1,51 @@
+name: Install pinned tools
+description: Downloads pinned versions of kubeconform, actionlint, and kustomize, verifies their SHA-256 checksums, and puts them on PATH.
+
+inputs:
+  kubeconform:
+    description: Install kubeconform.
+    default: "false"
+  actionlint:
+    description: Install actionlint.
+    default: "false"
+  kustomize:
+    description: Install kustomize.
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Install tools
+      shell: bash
+      env:
+        WANT_KUBECONFORM: ${{ inputs.kubeconform }}
+        WANT_ACTIONLINT: ${{ inputs.actionlint }}
+        WANT_KUSTOMIZE: ${{ inputs.kustomize }}
+      run: |
+        set -euo pipefail
+        bin="$RUNNER_TEMP/pinned-tools/bin"
+        mkdir -p "$bin"
+        echo "$bin" >> "$GITHUB_PATH"
+
+        # install <name> <url> <sha256>: downloads a tarball, checks it, and extracts <name> into $bin.
+        install() {
+          local archive="$RUNNER_TEMP/$1.tar.gz"
+          curl -fsSL --retry 3 "$2" -o "$archive"
+          echo "$3  $archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$bin" "$1"
+        }
+
+        if [[ "$WANT_KUBECONFORM" == "true" ]]; then
+          install kubeconform https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz \
+            9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+        fi
+
+        if [[ "$WANT_ACTIONLINT" == "true" ]]; then
+          install actionlint https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        fi
+
+        if [[ "$WANT_KUSTOMIZE" == "true" ]]; then
+          install kustomize https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.8.2/kustomize_v5.8.2_linux_amd64.tar.gz \
+            06af0a202c2b831207d0173f9c9cdb1b30abceca0747cb3fbb72792d26055c95
+        fi

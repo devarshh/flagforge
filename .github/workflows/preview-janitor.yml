@@ -1,0 +1,74 @@
+# Deletes preview namespaces whose pull request is no longer open, in case a cleanup run failed or never ran.
+name: preview-janitor
+
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-janitor
+  cancel-in-progress: false
+
+jobs:
+  config-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - name: Check the Azure configuration
+        id: check
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+        run: |
+          if [[ -z "$AZURE_CLIENT_ID" ]]; then
+            echo "::notice title=Janitor skipped::Azure is not configured (docs/azure-setup.md)."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  janitor:
+    needs: config-check
+    if: needs.config-check.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: read
+    steps:
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: azure/setup-kubectl@v5
+        with:
+          version: v1.37.1
+
+      - name: Delete previews of closed pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AKS_NAME: ${{ vars.AKS_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$AKS_NAME" --overwrite-existing
+          namespaces="$(kubectl get namespaces --selector flagforge/preview=true -o jsonpath='{.items[*].metadata.name}')"
+          for namespace in $namespaces; do
+            pr="$(kubectl get namespace "$namespace" -o go-template='{{index .metadata.labels "flagforge/pr"}}')"
+            state="$(gh pr view "$pr" --repo "$GITHUB_REPOSITORY" --json state --jq .state 2> /dev/null || echo UNKNOWN)"
+            case "$state" in
+              CLOSED | MERGED)
+                kubectl delete namespace "$namespace" --wait=false
+                echo "Deleted $namespace: pull request #$pr is $state."
+                ;;
+              OPEN) echo "Kept $namespace: pull request #$pr is open." ;;
+              *) echo "::warning::Could not read the state of pull request #$pr; kept $namespace." ;;
+            esac
+          done

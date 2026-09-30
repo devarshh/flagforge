@@ -1,0 +1,101 @@
+# Prepares an AKS cluster once (and upgrades it on later runs): installs Envoy Gateway, applies the platform
+# manifests (GatewayClass and Gateway), and reports the Gateway's public IP and the app's nip.io hostname.
+name: bootstrap-cluster
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bootstrap-cluster
+  cancel-in-progress: false
+
+jobs:
+  config-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - name: Check the Azure configuration
+        id: check
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+        run: |
+          if [[ -z "$AZURE_CLIENT_ID" ]]; then
+            echo "::notice title=Bootstrap skipped::Azure is not configured (docs/azure-setup.md)."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  bootstrap:
+    needs: config-check
+    if: needs.config-check.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: azure/setup-kubectl@v5
+        with:
+          version: v1.37.1
+
+      - uses: azure/setup-helm@v5
+        with:
+          version: v4.3.0
+
+      - name: Connect to the cluster
+        env:
+          AKS_NAME: ${{ vars.AKS_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$AKS_NAME" --overwrite-existing
+
+      # The chart also installs the Gateway API CRDs.
+      - name: Install Envoy Gateway
+        run: |
+          helm upgrade --install eg oci://docker.io/envoyproxy/gateway-helm --version 1.9.2 \
+            --namespace envoy-gateway-system --create-namespace --wait --timeout 10m
+          kubectl wait --namespace envoy-gateway-system --for=condition=Available deployment/envoy-gateway --timeout=5m
+
+      - name: Apply the platform
+        run: kubectl apply -k deploy/k8s/platform/aks
+
+      - name: Wait for the public IP
+        id: gateway
+        run: |
+          for _ in $(seq 1 60); do
+            ip="$(kubectl get gateway flagforge-gateway -n flagforge-system -o jsonpath='{.status.addresses[0].value}' 2> /dev/null || true)"
+            if [[ -n "$ip" ]]; then
+              echo "ip=$ip" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error title=No address::The Gateway got no address within 5 minutes. Check: kubectl describe gateway flagforge-gateway -n flagforge-system"
+          exit 1
+
+      - name: Summary
+        env:
+          IP: ${{ steps.gateway.outputs.ip }}
+        run: |
+          {
+            echo "## Cluster ready"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Gateway IP | \`$IP\` |"
+            echo "| App hostname | http://flagforge.$IP.nip.io |"
+            echo "| Preview hostnames | http://pr-<number>.$IP.nip.io |"
+          } >> "$GITHUB_STEP_SUMMARY"
