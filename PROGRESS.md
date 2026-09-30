@@ -13,7 +13,7 @@ verify the current state (build + tests), and continue from the first unchecked 
 | 3 | ServiceDefaults and Management API with integration tests | Tests pass; `/scalar` lists every endpoint | [x] |
 | 4 | Evaluation API with integration tests | Tests pass | [x] |
 | 5 | Worker with integration tests | Tests pass | [x] |
-| 6 | SDK and React bindings with tests | Tests pass; package builds with types | [ ] |
+| 6 | SDK and React bindings with tests | Tests pass; package builds with types | [x] |
 | 7 | Dashboard with tests | Lint, typecheck, tests, and build pass; against locally running APIs you can sign in, create a flag, edit targeting, and save | [ ] |
 | 8 | Demo app | Builds; connects to the local evaluation API and updates live when a flag changes | [ ] |
 | 9 | Dockerfiles, Compose, gateway, smoke test, Makefile | `docker compose up --build -d` on a clean checkout, then the smoke test passes in full mode | [ ] |
@@ -23,8 +23,9 @@ verify the current state (build + tests), and continue from the first unchecked 
 
 ## Current state
 
-Phases 0–5 complete. The backend is done: 366 tests pass across the solution (245 evaluation unit tests, 94 management
-API, 19 evaluation API, and 8 worker integration tests). Next: Phase 6 (JavaScript SDK and React bindings).
+Phases 0–6 complete. Backend: 366 tests. SDK: 22 Vitest tests; `tsc` emits ESM plus declarations for `.` and
+`./react`. Next: Phase 7 (dashboard). Until Phases 7–8 add tests, `npm test` fails for the dashboard and demo
+workspaces with "no test files found".
 
 ## Tooling (Phase 0 check, 2026-09-29, macOS arm64)
 
@@ -155,5 +156,16 @@ API, 19 evaluation API, and 8 worker integration tests). Next: Phase 6 (JavaScri
   Claims last 5 minutes (`ClaimedUntil`), after which another replica may reclaim the change.
 - **Worker tests drive processing directly:** the test host removes the periodic jobs so "two processors in parallel"
   is deterministic; one test keeps them and advances the fake clock to prove the real timer path executes changes.
+
+- **SDK internals:** results are stored per flag and the previous object is kept when a flag's evaluation is
+  unchanged, so React hooks (built on `useSyncExternalStore`) re-render only for their own flag and JSON values keep
+  their identity. `change` compares values only (per spec); a separate `subscribe` hook notifies on any state change
+  (evaluations, readiness, connection) for UI bindings. After every successful (re)connection the client re-evaluates
+  once to catch changes made while it was not listening. `ready()` resolving on timeout does not set `isReady`.
+- **Connection states:** `offline` means closed, or polling while the last request failed; a later successful poll
+  returns to `polling`. A background reconnect is attempted every 30 s while polling.
+- **Default SDK logger** writes warnings and errors to the console (`[flagforge]` prefix); pass `logger: {}` to
+  silence it. Invalid options (missing `baseUrl`, `sdkKey`, or `context.key`) throw at `createClient`, since they
+  are programming errors rather than flag unavailability.
 
 ## Unverified
