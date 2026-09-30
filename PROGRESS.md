@@ -15,7 +15,7 @@ verify the current state (build + tests), and continue from the first unchecked 
 | 5 | Worker with integration tests | Tests pass | [x] |
 | 6 | SDK and React bindings with tests | Tests pass; package builds with types | [x] |
 | 7 | Dashboard with tests | Lint, typecheck, tests, and build pass; against locally running APIs you can sign in, create a flag, edit targeting, and save | [x] |
-| 8 | Demo app | Builds; connects to the local evaluation API and updates live when a flag changes | [ ] |
+| 8 | Demo app | Builds; connects to the local evaluation API and updates live when a flag changes | [x] |
 | 9 | Dockerfiles, Compose, gateway, smoke test, Makefile | `docker compose up --build -d` on a clean checkout, then the smoke test passes in full mode | [ ] |
 | 10 | Kubernetes base, component, overlays, migrator Job, platform, kind scripts | Every kustomization validates (§20.6); if kind and helm are available, `scripts/k8s-local-up.sh --smoke` passes | [ ] |
 | 11 | Bicep, all GitHub workflows, Dependabot, PR template | `az bicep build` (if `az` is available) and `actionlint` pass | [ ] |
@@ -23,12 +23,14 @@ verify the current state (build + tests), and continue from the first unchecked 
 
 ## Current state
 
-Phases 0–7 complete. Backend: 366 tests. SDK: 22 Vitest tests. Dashboard: 85 Vitest tests; lint, typecheck, and
-build pass. Phase 7 was checked by hand against the Compose SQL Server and Redis with the migrator, the management
-API, and `npm run dev`: signed in as the seeded admin, created `checkout-redesign`, added a rule and a 25/75 default
-rollout in development, reviewed and saved (confirmed through the API and the audit log), ran the test panel, and
-looked at light mode and a 360 px viewport. Next: Phase 8 (demo app). Until it adds tests, root `npm test` fails for
-the demo workspace with "no test files found".
+Phases 0–8 complete. Backend: 366 tests. Frontend: 122 Vitest tests (SDK 22, dashboard 85, demo 15); root `npm run
+lint`, `typecheck`, `test`, and `build` pass. Phase 7 was checked by hand against the Compose SQL Server and Redis:
+signed in, created `checkout-redesign`, added a rule and a 25/75 default rollout in development, saved (confirmed
+through the API and the audit log), ran the test panel, and looked at light mode and a 360 px viewport. Phase 8 was
+checked against the local evaluation API through the demo's dev server: the store connected live over WebSockets,
+turning `promo-banner` off and on through the management API updated the page without a reload (702 ms from the API
+call to the banner appearing), and switching shoppers re-evaluated through `identify`. Next: Phase 9 (Dockerfiles,
+Compose, gateway, smoke test, Makefile).
 
 ## Tooling (Phase 0 check, 2026-09-29, macOS arm64)
 
@@ -198,5 +200,20 @@ the demo workspace with "no test files found".
   groups); the Data Grid, charts, and date pickers load with the pages that use them.
 - **Dialog focus in development:** React StrictMode runs MUI's focus-trap effect twice in `npm run dev`, which moves
   focus from an `autoFocus` field to the dialog. Production builds focus the field (checked with `vite preview`).
+
+- **Demo SDK key:** a key pasted in settings (localStorage `acme-coffee-sdk-key`) wins, then `/demo/config.json`
+  (nginx fills it from `DEMO_SDK_KEY`), then the dev server's fallback: `VITE_DEMO_SDK_KEY`, else the root `.env`'s
+  `FF_SEED_DEMO_SDK_KEY`, else the seeded development key. The fallback is injected with `define` only when serving,
+  so production builds contain no key (checked). `config.json` is read from `${BASE_URL}config.json`, and non-JSON
+  answers (Vite's HTML fallback) count as no key.
+- **One SDK client per key.** Switching shoppers calls `identify` (no reconnect); changing the key closes the client
+  and creates another, and the provider is keyed by connection so hooks and the inspector start fresh.
+- **The store checks flag shapes beyond the SDK's type check** (theme accent must be a hex color and `rounded` a
+  boolean, checkout colors must be known, cart limits 1–100) and falls back to its defaults otherwise.
+- **Lowering `max-cart-items` below the cart's size** keeps the items, blocks adding and checkout, and asks the shopper
+  to remove the excess, which makes the live change visible.
+- **Flag inspector** is a persistent drawer beside the store on large screens and a temporary drawer on smaller ones.
+- **Code font utility:** `.mono.mono` in both themes, because MUI component styles are injected after global styles
+  and a single class lost to them.
 
 ## Unverified
