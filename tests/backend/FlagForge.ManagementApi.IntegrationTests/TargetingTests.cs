@@ -233,6 +233,29 @@ public sealed class TargetingTests(FlagForgeFixture fixture) : ManagementApiTest
         json.ShouldNotContain("ruleId");
     }
 
+    [Fact]
+    public async Task Serves_are_written_with_only_the_alternative_in_use()
+    {
+        var config = On() with
+        {
+            Fallthrough = Serve.PercentageRollout(new Rollout
+            {
+                Weights = [new WeightedVariation { VariationId = "true", Weight = 25_000 }, new WeightedVariation { VariationId = "false", Weight = 75_000 }],
+            }),
+        };
+
+        await _editor.UpdateTargetingAsync(_project, _flag, Development, config, cancellationToken: Ct);
+
+        using var response = JsonDocument.Parse(await _editor.Client.GetStringAsync(Url, Ct));
+        PropertyNames(response.RootElement.GetProperty("fallthrough")).ShouldBe(["rollout"]);
+        await using var db = Fixture.CreateDbContext();
+        var entry = await db.AuditEntries.SingleAsync(a => a.Action == AuditActions.FlagTargetingUpdated, Ct);
+        PropertyNames(entry.Before!.Value.GetProperty("fallthrough")).ShouldBe(["variationId"]);
+        PropertyNames(entry.After!.Value.GetProperty("fallthrough")).ShouldBe(["rollout"]);
+    }
+
+    private static string[] PropertyNames(JsonElement element) => [.. element.EnumerateObject().Select(property => property.Name)];
+
     private static TargetingConfig On() => new()
     {
         Enabled = true,

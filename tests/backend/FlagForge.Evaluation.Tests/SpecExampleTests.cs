@@ -101,13 +101,4 @@ public sealed class SpecExampleTests
 
         Should.Throw<JsonException>(() => JsonSerializer.Deserialize<TargetingConfig>(json, Options));
     }
-
-    [Fact]
-    public void A_serve_writes_only_the_alternative_it_uses()
-    {
-        JsonSerializer.Serialize(SpecConfig.Rules[0].Serve, Options).ShouldBe("""{"variationId":"true"}""");
-
-        using var rollout = JsonDocument.Parse(JsonSerializer.Serialize(SpecConfig.Rules[1].Serve, Options));
-        rollout.RootElement.EnumerateObject().Select(property => property.Name).ShouldBe(["rollout"]);
-    }
 }
