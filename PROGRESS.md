@@ -221,7 +221,7 @@ save, test panel, light mode, 360 px); Phase 8 through the demo's dev server (a 
 
 - **SDK internals:** results are stored per flag and the previous object is kept when a flag's evaluation is
   unchanged, so React hooks (built on `useSyncExternalStore`) re-render only for their own flag and JSON values keep
-  their identity. `change` compares values only (per spec); a separate `subscribe` hook notifies on any state change
+  their identity. `change` compares values only; a separate `subscribe` hook notifies on any state change
   (evaluations, readiness, connection) for UI bindings. After every successful (re)connection the client re-evaluates
   once to catch changes made while it was not listening. `ready()` resolving on timeout does not set `isReady`.
 - **Connection states:** `offline` means closed, or polling while the last request failed; a later successful poll
