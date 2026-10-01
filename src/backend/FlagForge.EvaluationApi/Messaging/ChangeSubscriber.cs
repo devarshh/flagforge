@@ -10,113 +10,127 @@ namespace FlagForge.EvaluationApi.Messaging;
 
 /// <summary>
 /// Every pod subscribes independently. A config-changed message evicts that environment's snapshot and tells the pod's
-/// own connections in the environment's group; a revocation evicts the key. When the Redis subscription reconnects,
-/// messages may have been missed, so all caches are dropped and connected environments are re-notified.
+/// own connections in the environment's group; a revocation evicts the key.
 /// </summary>
-public sealed partial class ChangeSubscriber(
-    IConnectionMultiplexer redis,
-    SnapshotCache snapshots,
-    SdkKeyCache sdkKeys,
-    HubConnectionTracker connections,
-    IHubContext<FlagsHub, IFlagsClient> hub,
-    EvaluationMetrics metrics,
-    ILogger<ChangeSubscriber> logger) : IHostedService, IDisposable
+/// <remarks>
+/// The handlers are registered with the multiplexer even when Redis is unreachable at startup (pods and Redis often
+/// start together), and the multiplexer subscribes them whenever a connection is established. Messages may have been
+/// missed while disconnected, so every restored connection drops all caches and re-notifies connected environments.
+/// That includes restored interactive connections: with RESP3, subscriptions share the interactive connection.
+/// </remarks>
+public sealed partial class ChangeSubscriber : IHostedService
 {
-    private readonly SemaphoreSlim _subscribeLock = new(1, 1);
-    private ChannelMessageQueue? _configChanged;
-    private ChannelMessageQueue? _sdkKeyRevoked;
+    private static readonly RedisChannel ConfigChanged = RedisChannel.Literal(Channels.ConfigChanged);
+    private static readonly RedisChannel SdkKeyRevoked = RedisChannel.Literal(Channels.SdkKeyRevoked);
+
+    private readonly IConnectionMultiplexer _redis;
+    private readonly SnapshotCache _snapshots;
+    private readonly SdkKeyCache _sdkKeys;
+    private readonly HubConnectionTracker _connections;
+    private readonly IHubContext<FlagsHub, IFlagsClient> _hub;
+    private readonly EvaluationMetrics _metrics;
+    private readonly ILogger<ChangeSubscriber> _logger;
+    private readonly Action<RedisChannel, RedisValue> _onConfigChanged;
+    private readonly Action<RedisChannel, RedisValue> _onSdkKeyRevoked;
+
+    public ChangeSubscriber(
+        IConnectionMultiplexer redis,
+        SnapshotCache snapshots,
+        SdkKeyCache sdkKeys,
+        HubConnectionTracker connections,
+        IHubContext<FlagsHub, IFlagsClient> hub,
+        EvaluationMetrics metrics,
+        ILogger<ChangeSubscriber> logger)
+    {
+        _redis = redis;
+        _snapshots = snapshots;
+        _sdkKeys = sdkKeys;
+        _connections = connections;
+        _hub = hub;
+        _metrics = metrics;
+        _logger = logger;
+        _onConfigChanged = (channel, payload) => _ = RunSafelyAsync(() => HandleConfigChangedAsync(payload.ToString()));
+        _onSdkKeyRevoked = (channel, payload) => _ = RunSafelyAsync(() =>
+        {
+            HandleSdkKeyRevoked(payload.ToString());
+            return Task.CompletedTask;
+        });
+    }
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        redis.ConnectionRestored += OnConnectionRestored;
-        await EnsureSubscribedAsync();
+        _redis.ConnectionRestored += OnConnectionRestored;
+        var subscriber = _redis.GetSubscriber();
+        await SubscribeAsync(subscriber, ConfigChanged, _onConfigChanged);
+        await SubscribeAsync(subscriber, SdkKeyRevoked, _onSdkKeyRevoked);
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        redis.ConnectionRestored -= OnConnectionRestored;
-        foreach (var queue in new[] { _configChanged, _sdkKeyRevoked })
+        _redis.ConnectionRestored -= OnConnectionRestored;
+        var subscriber = _redis.GetSubscriber();
+        try
         {
-            if (queue is not null)
-            {
-                await queue.UnsubscribeAsync();
-            }
+            await subscriber.UnsubscribeAsync(ConfigChanged, _onConfigChanged, CommandFlags.FireAndForget);
+            await subscriber.UnsubscribeAsync(SdkKeyRevoked, _onSdkKeyRevoked, CommandFlags.FireAndForget);
+        }
+        catch (Exception ex) when (ex is RedisException or TimeoutException)
+        {
+            // Shutting down without Redis: the connection closes with the process anyway.
+            LogUnsubscribeFailed(_logger, ex);
         }
     }
 
-    public void Dispose() => _subscribeLock.Dispose();
+    private async Task SubscribeAsync(ISubscriber subscriber, RedisChannel channel, Action<RedisChannel, RedisValue> handler)
+    {
+        try
+        {
+            await subscriber.SubscribeAsync(channel, handler);
+        }
+        catch (Exception ex) when (ex is RedisException or TimeoutException)
+        {
+            // The multiplexer keeps the handler and subscribes it once Redis is reachable; until then, snapshots
+            // expire on their TTL, so evaluations stay correct.
+            LogSubscribeFailed(_logger, channel.ToString(), ex);
+        }
+    }
 
     private async Task HandleConfigChangedAsync(string payload)
     {
-        metrics.RecordConfigChangeReceived();
+        _metrics.RecordConfigChangeReceived();
         var change = JsonSerializer.Deserialize<ConfigChangedMessage>(payload, JsonDefaults.Options);
         if (change is null)
         {
             return;
         }
 
-        snapshots.Evict(change.EnvironmentId);
-        await hub.Clients.Group(FlagsHub.GroupName(change.EnvironmentId)).FlagsChanged(new FlagsChangedMessage(change.ConfigVersion));
+        _snapshots.Evict(change.EnvironmentId);
+        await _hub.Clients.Group(FlagsHub.GroupName(change.EnvironmentId)).FlagsChanged(new FlagsChangedMessage(change.ConfigVersion));
     }
 
-    private async Task EnsureSubscribedAsync()
+    private void HandleSdkKeyRevoked(string payload)
     {
-        await _subscribeLock.WaitAsync();
-        try
+        var revoked = JsonSerializer.Deserialize<SdkKeyRevokedMessage>(payload, JsonDefaults.Options);
+        if (revoked is not null)
         {
-            var subscriber = redis.GetSubscriber();
-            if (_configChanged is null)
-            {
-                _configChanged = await subscriber.SubscribeAsync(RedisChannel.Literal(Channels.ConfigChanged));
-                _configChanged.OnMessage(message => RunSafelyAsync(() => HandleConfigChangedAsync(message.Message.ToString())));
-            }
-
-            if (_sdkKeyRevoked is null)
-            {
-                _sdkKeyRevoked = await subscriber.SubscribeAsync(RedisChannel.Literal(Channels.SdkKeyRevoked));
-                _sdkKeyRevoked.OnMessage(message => RunSafelyAsync(() =>
-                {
-                    var revoked = JsonSerializer.Deserialize<SdkKeyRevokedMessage>(message.Message.ToString(), JsonDefaults.Options);
-                    if (revoked is not null)
-                    {
-                        sdkKeys.Evict(revoked.SdkKeyId);
-                    }
-
-                    return Task.CompletedTask;
-                }));
-            }
-        }
-        catch (Exception ex) when (ex is RedisException or TimeoutException)
-        {
-            // Evaluations stay correct without Redis: snapshots expire on their TTL. The reconnect handler retries.
-            LogSubscribeFailed(logger, ex);
-        }
-        finally
-        {
-            _subscribeLock.Release();
+            _sdkKeys.Evict(revoked.SdkKeyId);
         }
     }
 
-    private void OnConnectionRestored(object? sender, ConnectionFailedEventArgs args)
-    {
-        if (args.ConnectionType == ConnectionType.Subscription)
-        {
-            _ = RunSafelyAsync(ResynchronizeAsync);
-        }
-    }
+    private void OnConnectionRestored(object? sender, ConnectionFailedEventArgs args) =>
+        _ = RunSafelyAsync(() => ResynchronizeAsync(args.ConnectionType));
 
-    private async Task ResynchronizeAsync()
+    private async Task ResynchronizeAsync(ConnectionType connectionType)
     {
-        LogResynchronizing(logger);
-        snapshots.EvictAll();
-        sdkKeys.Clear();
-        await EnsureSubscribedAsync();
-        foreach (var environmentId in connections.ConnectedEnvironments)
+        LogResynchronizing(_logger, connectionType);
+        _snapshots.EvictAll();
+        _sdkKeys.Clear();
+        foreach (var environmentId in _connections.ConnectedEnvironments)
         {
-            var snapshot = await snapshots.GetAsync(environmentId, CancellationToken.None);
+            var snapshot = await _snapshots.GetAsync(environmentId, CancellationToken.None);
             if (snapshot is not null)
             {
-                await hub.Clients.Group(FlagsHub.GroupName(environmentId)).FlagsChanged(new FlagsChangedMessage(snapshot.ConfigVersion));
+                await _hub.Clients.Group(FlagsHub.GroupName(environmentId)).FlagsChanged(new FlagsChangedMessage(snapshot.ConfigVersion));
             }
         }
     }
@@ -130,15 +144,18 @@ public sealed partial class ChangeSubscriber(
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // A bad message or a transient failure must not stop the subscription; TTLs cover anything missed.
-            LogHandlerFailed(logger, ex);
+            LogHandlerFailed(_logger, ex);
         }
     }
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not subscribe to Redis change channels; will retry when Redis reconnects")]
-    private static partial void LogSubscribeFailed(ILogger logger, Exception exception);
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not subscribe to Redis channel {Channel}; it is subscribed when Redis becomes reachable")]
+    private static partial void LogSubscribeFailed(ILogger logger, string channel, Exception exception);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Redis subscription restored; dropping cached snapshots and SDK keys and re-notifying clients")]
-    private static partial void LogResynchronizing(ILogger logger);
+    [LoggerMessage(Level = LogLevel.Information, Message = "Could not unsubscribe from Redis while stopping")]
+    private static partial void LogUnsubscribeFailed(ILogger logger, Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Redis connection ({ConnectionType}) established; dropping cached snapshots and SDK keys and re-notifying clients")]
+    private static partial void LogResynchronizing(ILogger logger, ConnectionType connectionType);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Handling a Redis change message failed")]
     private static partial void LogHandlerFailed(ILogger logger, Exception exception);
