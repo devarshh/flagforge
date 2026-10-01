@@ -19,12 +19,38 @@ verify the current state (build + tests), and continue from the first unchecked 
 | 9 | Dockerfiles, Compose, gateway, smoke test, Makefile | `docker compose up --build -d` on a clean checkout, then the smoke test passes in full mode | [x] |
 | 10 | Kubernetes base, component, overlays, migrator Job, platform, kind scripts | Every kustomization validates (§20.6); if kind and helm are available, `scripts/k8s-local-up.sh --smoke` passes | [x] |
 | 11 | Bicep, all GitHub workflows, Dependabot, PR template | `az bicep build` (if `az` is available) and `actionlint` pass | [x] |
-| 12 | Documentation (§25), polish, and final verification | Run everything again from a clean state (backend tests, frontend tests, Compose smoke test, manifest validation); `PROGRESS.md` complete with Decisions and Unverified sections | [ ] |
+| 12 | Documentation (§25), polish, and final verification | Run everything again from a clean state (backend tests, frontend tests, Compose smoke test, manifest validation); `PROGRESS.md` complete with Decisions and Unverified sections | [x] |
 
 ## Current state
 
-Phases 0–9 complete. Backend: 366 tests. Frontend: 122 Vitest tests (SDK 22, dashboard 85, demo 15); root `npm run
-lint`, `typecheck`, `test`, and `build` pass.
+All phases (0–12) are complete. Backend: 368 tests (245 for the evaluation engine, at 99.6% line coverage). Frontend:
+132 Vitest tests (SDK 22, dashboard 95, demo 15). Documentation: README (with real screenshots), architecture,
+evaluation, API, local Kubernetes, Azure setup, ten ADRs, and talking points.
+
+Phase 12 checkpoint (2026-09-30 and 2026-10-01), on a fresh clone of the final commit with no `.env`:
+
+- **Backend:** `dotnet format --verify-no-changes` is clean, the Release build has 0 warnings, all 368 tests pass, and
+  `scripts/check-coverage.sh` reports 99.6% for `FlagForge.Evaluation`.
+- **Frontend:** `npm ci`, `lint` (ESLint and Prettier), `typecheck`, `test`, and `build` pass with no warnings (run at
+  `a374ec2`; the two later commits change only backend files).
+- **Static checks:** `scripts/k8s-validate.sh` (every kustomization valid, nothing skipped), `actionlint` with
+  shellcheck, `shellcheck scripts/*.sh`, and `az bicep build`, `lint`, and `build-params`.
+- **Compose:** `docker compose up --build -d` on wiped volumes in one pass; the smoke test passed in full mode
+  (FlagsChanged 68 ms after the toggle) and in readonly mode; no warnings or errors in any service log.
+- **kind:** `scripts/k8s-local-up.sh --smoke` from a new cluster passed (migrator Job, Envoy Gateway, full smoke test,
+  FlagsChanged after 58 ms).
+- **Definition of done in the UI** (headless Chrome against the clean Compose stack, at the commit before the last two
+  backend fixes): signed in as the admin, created
+  a flag, added a rule (email ends with `@acme.com`) and a 25/75 rollout, reviewed the diff, and saved; History shows
+  the change with its diff. Two editors saving the same targeting got the 409 conflict dialog, and "Load latest
+  version" loaded the other save. A scheduled turn-on and a three-step release plan completed through the worker,
+  in order, within 35 s. Insights charts the seeded usage; Stale flags lists `dark-mode-beta`. A Viewer sees every
+  switch disabled and no Create flag button; an Editor can switch Development and Staging but not Production, and
+  cannot edit Production targeting.
+- **Fixed during the final pass**, each with tests: the evaluation API never received changes when it started before
+  Redis, and missed RESP3 reconnects (found by the kind smoke test); the Insights chart merged the oldest and the
+  current hour; "Last evaluated" claimed minute precision for hourly data; targeting JSON carried the unused serve
+  alternative as null; environment header chips were truncated; and the demo's inspector covered the store on phones.
 
 Phase 9 checkpoint: a copy of exactly the files git tracks (no `.env`, no build output) ran as its own Compose project
 with fresh volumes. `docker compose up --build -d` succeeded in one pass, and the smoke test passed in full mode
@@ -47,7 +73,7 @@ exercised on a copy of the manifests the way CD runs it.
 
 Earlier manual checks: Phase 7 against the Compose SQL Server and Redis (sign in, create a flag, edit targeting,
 save, test panel, light mode, 360 px); Phase 8 through the demo's dev server (a flag change reached the page in
-702 ms; `identify` on shopper switch). Next: Phase 12 (documentation, polish, and final verification).
+702 ms; `identify` on shopper switch).
 
 ## Tooling (Phase 0 check, 2026-09-29, macOS arm64)
 
@@ -65,6 +91,7 @@ save, test panel, light mode, 360 px); Phase 8 through the demo's dev server (a 
 | shellcheck | 0.11.0 | Downloaded to `./.tools/` in Phase 11 (checksum verified); lets local actionlint check scripts like CI |
 | kustomize | 5.8.2 | Downloaded to `./.tools/` in Phase 11 (checksum verified); CI pins the same version |
 | Bicep CLI | 0.47.16 | Installed with `az bicep install` (in `~/.azure/bin`) in Phase 11 |
+| ffmpeg | 8.0.1 | Homebrew; used in Phase 12 only to encode the README images (with headless Google Chrome) |
 
 ## Decisions
 
@@ -130,6 +157,9 @@ save, test panel, light mode, 360 px); Phase 8 through the demo's dev server (a 
 - **Errors are exceptions mapped once** (`AppExceptionHandler` in ServiceDefaults): typed application exceptions
   become 400/401/403/404/409 ProblemDetails; JSON binding failures (`ThrowOnBadRequest`) become 400 with the field path
   (for example `config.rules[0].clauses[0].operator`); SQL duplicate-key races become 409.
+- **A serve is written with only the alternative it uses** (`{ "variationId" }` or `{ "rollout" }`), by a type-info
+  modifier in `JsonDefaults`, so the evaluation model stays attribute-free and audit diffs show no null alternative.
+  JSON with explicit nulls still reads.
 - **JSON enum values are camelCase** everywhere (`"type": "boolean"`, `"role": "admin"`, `"action": "turnOn"`,
   operators `"in"`/`"endsWith"`); only evaluation reason kinds use the SDK format (`"RULE_MATCH"`).
 - **PATCH semantics:** null or missing fields are unchanged; an empty description clears it.
@@ -148,8 +178,9 @@ save, test panel, light mode, 360 px); Phase 8 through the demo's dev server (a 
   one wins; a failed refresh also deletes the cookie; changing a password ends every other session; logout is
   anonymous because it only needs the cookie; JWT lifetimes are validated against the injected `TimeProvider`.
 - **Login rate limit** is configurable (`RateLimiting__LoginPermitsPerMinute`, default 10).
-- **`lastEvaluatedAt` has hourly precision** (start of the latest usage hour). **FullyRolledOut** requires at least one
-  evaluation in the last 14 days; a flag evaluated 15–30 days ago and not since is not stale.
+- **`lastEvaluatedAt` has hourly precision** (start of the latest usage hour), so the dashboard shows the current hour
+  as "this hour" instead of a minute-precise time, with the hour's range in the tooltip. **FullyRolledOut** requires at
+  least one evaluation in the last 14 days; a flag evaluated 15–30 days ago and not since is not stale.
 - **Audit filters** resolve keys to ids (matching the indexes); a key that no longer exists matches nothing.
 - **ServiceDefaults adds `app.UseServiceDefaults()`** (forwarded headers, exception handler, status-code pages) because
   middleware order matters; `MapDefaultEndpoints()` maps only the health endpoints.
@@ -160,6 +191,11 @@ save, test panel, light mode, 360 px); Phase 8 through the demo's dev server (a 
 - **Redis reconnect heals clients too:** besides evicting all snapshots (spec), the subscriber clears the SDK-key
   cache (a revocation may have been missed) and sends `FlagsChanged` with the fresh version to every environment that
   has connections on this pod; without that, streaming clients would keep stale values until the next change.
+- **Subscriptions survive a Redis that starts late:** handlers are registered as callbacks, which StackExchange.Redis
+  keeps through a failed first subscribe and subscribes whenever it connects (a `ChannelMessageQueue` from a failed
+  call is orphaned: the client still feeds it, but nothing reads it). Every restored connection resynchronizes,
+  whatever its type, because with RESP3 (the client's choice against Redis 7) subscriptions share the interactive
+  connection. Found by the kind smoke test in Phase 12; `RedisOutageTests` starts the API before its Redis.
 - **SDK key checks:** anything with the `ffk_` prefix up to 128 characters is looked up (the seeded development key is
   not 43 characters); unknown keys are not cached, so a new key works immediately.
 - **Hub transport is WebSockets only** (no negotiate, no long polling), matching the SDK and needing no sticky sessions.
@@ -232,7 +268,8 @@ save, test panel, light mode, 360 px); Phase 8 through the demo's dev server (a 
   boolean, checkout colors must be known, cart limits 1–100) and falls back to its defaults otherwise.
 - **Lowering `max-cart-items` below the cart's size** keeps the items, blocks adding and checkout, and asks the shopper
   to remove the excess, which makes the live change visible.
-- **Flag inspector** is a persistent drawer beside the store on large screens and a temporary drawer on smaller ones.
+- **Flag inspector** is a persistent drawer beside the store on large screens, open at first, and a temporary drawer
+  on smaller ones, closed at first (open, it would cover the whole store on a phone).
 - **Code font utility:** `.mono.mono` in both themes, because MUI component styles are injected after global styles
   and a single class lost to them.
 
@@ -309,6 +346,15 @@ save, test panel, light mode, 360 px); Phase 8 through the demo's dev server (a 
   the summary shown in the job summary.
 - **The preview janitor deletes a namespace only when the pull request is CLOSED or MERGED**; an unreadable state keeps
   the preview and logs a warning.
+
+- **README images are real captures** from a fresh Compose stack, taken with a throwaway headless-Chrome script (the
+  DevTools protocol over Node's built-in WebSocket, so nothing was installed) and encoded with ffmpeg. The GIF stacks
+  the flag list above the demo store so text stays readable at README width. An HTML comment in the README explains
+  how to recapture them by hand.
+- **Flag list environment columns are 136 px**, enough for the default environments' header chips (Production's
+  includes a lock icon).
+- **The Insights x axis is keyed by bucket start**, not by its label: the last 24 hours span 25 hourly buckets, and
+  the first and last share an hour label, which a band axis would merge into one bar.
 
 ## Unverified
 
