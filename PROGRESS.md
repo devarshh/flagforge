@@ -1,14 +1,15 @@
-# FlagForge — build progress
+# FlagForge — build log
 
-This file tracks the build against `PROJECT_SPEC.md` §27. A fresh session should read this file,
-verify the current state (build + tests), and continue from the first unchecked item.
+FlagForge was built in thirteen phases, each with a checkpoint that had to pass before the next one started. This log
+records the phases, the final state and how it was verified, the tools used, the decisions made along the way, and
+what remains unverified.
 
 ## Phases
 
 | Phase | Work | Checkpoint | Status |
 |---|---|---|---|
 | 0 | Repository scaffolding, tooling configs, solution and empty projects, npm workspace, `.env.example`, `PROGRESS.md`, LICENSE, `git init` | `dotnet build` succeeds; `npm ci && npm run build` succeeds in `src/frontend` | [x] |
-| 1 | Evaluation engine and validator with full tests (§7) | Tests pass; coverage ≥95% | [x] |
+| 1 | Evaluation engine and validator with full tests | Tests pass; coverage ≥95% | [x] |
 | 2 | Domain, Infrastructure, EF Core model and initial migration, Migrator with seed data | Against the Compose SQL Server: the migrator runs twice and the second run changes nothing | [x] |
 | 3 | ServiceDefaults and Management API with integration tests | Tests pass; `/scalar` lists every endpoint | [x] |
 | 4 | Evaluation API with integration tests | Tests pass | [x] |
@@ -17,15 +18,15 @@ verify the current state (build + tests), and continue from the first unchecked 
 | 7 | Dashboard with tests | Lint, typecheck, tests, and build pass; against locally running APIs you can sign in, create a flag, edit targeting, and save | [x] |
 | 8 | Demo app | Builds; connects to the local evaluation API and updates live when a flag changes | [x] |
 | 9 | Dockerfiles, Compose, gateway, smoke test, Makefile | `docker compose up --build -d` on a clean checkout, then the smoke test passes in full mode | [x] |
-| 10 | Kubernetes base, component, overlays, migrator Job, platform, kind scripts | Every kustomization validates (§20.6); if kind and helm are available, `scripts/k8s-local-up.sh --smoke` passes | [x] |
+| 10 | Kubernetes base, component, overlays, migrator Job, platform, kind scripts | Every kustomization validates; if kind and helm are available, `scripts/k8s-local-up.sh --smoke` passes | [x] |
 | 11 | Bicep, all GitHub workflows, Dependabot, PR template | `az bicep build` (if `az` is available) and `actionlint` pass | [x] |
-| 12 | Documentation (§25), polish, and final verification | Run everything again from a clean state (backend tests, frontend tests, Compose smoke test, manifest validation); `PROGRESS.md` complete with Decisions and Unverified sections | [x] |
+| 12 | Documentation, polish, and final verification | Run everything again from a clean state (backend tests, frontend tests, Compose smoke test, manifest validation); `PROGRESS.md` complete with Decisions and Unverified sections | [x] |
 
 ## Current state
 
 All phases (0–12) are complete. Backend: 368 tests (245 for the evaluation engine, at 99.6% line coverage). Frontend:
 132 Vitest tests (SDK 22, dashboard 95, demo 15). Documentation: README (with real screenshots), architecture,
-evaluation, API, local Kubernetes, Azure setup, ten ADRs, and talking points.
+evaluation, API, local Kubernetes, Azure setup, and ten ADRs.
 
 Phase 12 checkpoint (2026-09-30 and 2026-10-01), on a fresh clone of the final commit with no `.env`:
 
@@ -97,7 +98,7 @@ save, test panel, light mode, 360 px); Phase 8 through the demo's dev server (a 
 
 - **TypeScript 6.0.3, not 7.x.** TypeScript 7.0.2 is the latest release, but typescript-eslint 8.71 (latest) declares
   `typescript >=4.8.4 <6.1.0`. 6.0.3 is the newest version inside that range.
-- **React Router 7.18.4.** The spec requires v7 in library mode; 8.x exists but is out of scope.
+- **React Router 7.18.4.** The dashboard targets v7 in library mode; 8.x exists but was out of scope.
 - **`@types/node` 24.x** to match the Node 24 LTS runtime (`.nvmrc`), not the 26.x "latest" tag.
 - **Tests run on Microsoft Testing Platform.** xUnit v3 4.x ships `xunit.v3.mtp-v2`, and MTP v2 no longer supports the
   VSTest bridge on the .NET 10 SDK, so `global.json` sets `"test": { "runner": "Microsoft.Testing.Platform" }` and the
@@ -118,14 +119,14 @@ save, test panel, light mode, 360 px); Phase 8 through the demo's dev server (a 
 - **Evaluation model is attribute-free.** The targeting records (`TargetingConfig`, `Rule`, `Clause`, `Serve`, ...)
   live in `FlagForge.Evaluation` with no serialization attributes; the JSON contract (camelCase names, camelCase enum
   strings, `SCREAMING_SNAKE` reason kinds) is configured once in the application's JSON options.
-- **Context details not fixed by the spec:** a `null` attribute is accepted and treated as missing; arrays may not
+- **Context details decided during the build:** a `null` attribute is accepted and treated as missing; arrays may not
   contain `null`; duplicate attribute names are a 400; unknown top-level context properties are ignored.
 - **Numeric parsing** uses `NumberStyles.Float` with the invariant culture (sign, decimal point, exponent; no
   thousands separators, so `"1,000"` is not a number). Number bucket values drop trailing zeros so `31` and `31.0`
   hash identically.
 - **Normalization on save** also removes duplicate keys inside a target list and drops empty target lists, in addition
   to ordering rollout weights by variation.
-- **Extra bounds** not in the spec: rule ids at most 64 characters, rule descriptions at most 200.
+- **Extra bounds:** rule ids at most 64 characters, rule descriptions at most 200.
 
 - **Entity `ProjectEnvironment`** (table `Environments`): a class named `Environment` would clash with
   `System.Environment` in every file that imports the domain namespace.
@@ -188,7 +189,7 @@ save, test panel, light mode, 360 px); Phase 8 through the demo's dev server (a 
 - **Snapshot cache:** single-flight via `Lazy<Task>` per environment; loads use no caller's cancellation token (they
   are shared); failed loads and missing environments are not cached; eviction removes the entry itself, so a load that
   was in flight when a change arrived is never stored.
-- **Redis reconnect heals clients too:** besides evicting all snapshots (spec), the subscriber clears the SDK-key
+- **Redis reconnect heals clients too:** besides evicting all snapshots, the subscriber clears the SDK-key
   cache (a revocation may have been missed) and sends `FlagsChanged` with the fresh version to every environment that
   has connections on this pod; without that, streaming clients would keep stale values until the next change.
 - **Subscriptions survive a Redis that starts late:** handlers are registered as callbacks, which StackExchange.Redis
@@ -231,7 +232,7 @@ save, test panel, light mode, 360 px); Phase 8 through the demo's dev server (a 
 
 - **Dashboard structure:** each feature folder holds its API hooks and components; the project settings page
   (details, environments, SDK keys, danger zone) lives in `features/projects/`, and there is no `features/account/`
-  because §12.1 puts `ChangePasswordPage` in `auth/`. Helpers such as the draft reducer, operator mapping, rollout
+  because `ChangePasswordPage` lives in `auth/`. Helpers such as the draft reducer, operator mapping, rollout
   math, and validation are plain `.ts` modules so React Fast Refresh keeps working; test helpers live in `src/test/`
   (the only place the react-refresh lint rule is off).
 - **Audit details open in a side panel.** The free MUI X Data Grid has no expandable detail rows (a Pro feature), so a

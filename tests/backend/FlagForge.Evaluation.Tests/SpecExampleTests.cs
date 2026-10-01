@@ -4,7 +4,7 @@ using static FlagForge.Evaluation.Tests.Build;
 
 namespace FlagForge.Evaluation.Tests;
 
-/// <summary>Deserializes the targeting example from the specification (§7.1) and evaluates it.</summary>
+/// <summary>Deserializes the targeting example documented in docs/evaluation.md and evaluates it.</summary>
 public sealed class SpecExampleTests
 {
     private const string SpecConfigJson = """

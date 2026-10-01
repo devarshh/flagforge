@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Renders every kustomization under deploy/k8s and validates the output with kubeconform (PROJECT_SPEC §20.6):
+# Renders every kustomization under deploy/k8s and validates the output with kubeconform:
 # the local, preview, and aks overlays, the migrator Job, and both platforms. The preview overlay is also rendered
 # the way the preview workflow deploys it, with a sample namespace and hostname.
 #

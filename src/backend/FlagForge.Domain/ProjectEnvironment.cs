@@ -1,8 +1,8 @@
 namespace FlagForge.Domain;
 
 /// <summary>
-/// An environment of a project (the spec's "Environment"; named ProjectEnvironment to avoid clashing with
-/// <see cref="System.Environment"/>).
+/// An environment of a project (an "environment" in the API and dashboard; named ProjectEnvironment to avoid
+/// clashing with <see cref="System.Environment"/>).
 /// </summary>
 public sealed class ProjectEnvironment
 {

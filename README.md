@@ -178,7 +178,7 @@ deploy/compose/       the Compose gateway
 deploy/k8s/           Kustomize base, components, overlays, migrator Job, and platform manifests
 infra/                Bicep for Azure
 scripts/              dev secrets, kind up and down, manifest validation, Azure deployment
-docs/                 architecture, evaluation, API, Kubernetes, Azure, decisions, talking points
+docs/                 architecture, evaluation, API, Kubernetes, Azure, decisions
 .github/              CI, CD, previews, janitor, cluster bootstrap, Dependabot
 ```
 
