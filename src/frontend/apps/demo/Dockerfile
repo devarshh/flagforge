@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # The Acme Coffee demo. Build from the npm workspace root: docker build -f apps/demo/Dockerfile src/frontend
 
-FROM node:24-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /workspace
 
 # Install in its own layer, so it reruns only when a manifest or the lock file changes.
