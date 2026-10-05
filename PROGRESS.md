@@ -365,12 +365,12 @@ save, test panel, light mode, 360 px); Phase 8 through the demo's dev server (a 
 
 ## Unverified
 
-- **CD, the janitor, and the bootstrap workflow have not run on GitHub yet.** On 2026-10-04, CI ran for the first push
-  to `main` and passed every job (backend tests and coverage, frontend checks, manifests and Bicep, the six images,
-  and the Compose smoke test). The preview workflow ran on Dependabot's first pull requests and skipped deployment
-  because Azure is not configured, as designed. CD ignores pushes that change only documentation and did not run for
-  the first push; the janitor runs on its daily schedule and the bootstrap workflow is manual. All three were checked
-  statically (actionlint with shellcheck), and their building blocks were run locally: `scripts/k8s-validate.sh`,
+- **The Azure paths of the workflows have not run.** On 2026-10-04, CI ran on GitHub for the first push to `main` and
+  passed every job (backend tests and coverage, frontend checks, manifests and Bicep, the six images, and the Compose
+  smoke test). Without Azure configured, CD (on the second push) and the preview workflow (on Dependabot's pull
+  requests) ran only their configuration check and skipped deployment, as designed. The janitor runs on a daily
+  schedule and the bootstrap workflow is manual; neither has run yet. Their deployment steps were checked statically
+  (actionlint with shellcheck), and their building blocks were run locally: `scripts/k8s-validate.sh`,
   `kustomize edit set image`, and the migrator and overlay scripts (through the kind deployment).
 - **Nothing was deployed to Azure.** The Bicep builds and lints cleanly, but `scripts/azure-deploy-infra.sh`, the
   role assignments (including whether Reader is needed for `az acr login` with AcrPush), the free-offer settings, and
