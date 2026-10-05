@@ -2,7 +2,7 @@
 
 **Self-hosted feature flags: change what your app does in about a second, without a deploy.**
 
-[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
+[![CI](https://github.com/devarshh/flagforge/actions/workflows/ci.yml/badge.svg)](https://github.com/devarshh/flagforge/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ![The flag list: each environment is a column of lamps you can switch](docs/images/dashboard.png)
@@ -41,7 +41,7 @@ and on Azure (AKS) with CI/CD and a preview environment for every pull request.
 With Docker Desktop (on Apple silicon, turn on Rosetta emulation for SQL Server):
 
 ```sh
-git clone https://github.com/OWNER/REPO.git flagforge && cd flagforge
+git clone https://github.com/devarshh/flagforge.git && cd flagforge
 docker compose up --build -d
 open http://localhost:8080          # the dashboard; the demo store is at http://localhost:8080/demo/
 ```
