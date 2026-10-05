@@ -24,7 +24,8 @@ what remains unverified.
 
 ## Current state
 
-All phases (0–12) are complete. Backend: 368 tests (245 for the evaluation engine, at 99.6% line coverage). Frontend:
+All phases (0–12) are complete, and the repository is on GitHub (github.com/devarshh/flagforge), where CI passes.
+Backend: 368 tests (245 for the evaluation engine, at 99.6% line coverage). Frontend:
 132 Vitest tests (SDK 22, dashboard 95, demo 15). Documentation: README (with real screenshots), architecture,
 evaluation, API, local Kubernetes, Azure setup, and ten ADRs.
 
@@ -357,11 +358,19 @@ save, test panel, light mode, 360 px); Phase 8 through the demo's dev server (a 
 - **The Insights x axis is keyed by bucket start**, not by its label: the last 24 hours span 25 hourly buckets, and
   the first and last share an hour label, which a band axis would merge into one bar.
 
+- **Dependabot ignores some major updates** that conflict with deliberate choices: TypeScript 7 (outside
+  typescript-eslint's supported range), `@types/node` and the Node image beyond 24 (the Node.js 24 LTS runtime in
+  `.nvmrc`), and React Router 8 (a migration, not a routine update). Its first pull requests proposed all four; the
+  TypeScript 7 one failed `npm ci` on the peer-dependency conflict.
+
 ## Unverified
 
-- **GitHub workflows have never run.** The repository has no remote, so CI, CD, previews, the janitor, the bootstrap
-  workflow, and Dependabot were checked only statically (actionlint with shellcheck). Their building blocks were run
-  locally: the Compose smoke test, `scripts/k8s-validate.sh`, `scripts/check-coverage.sh`, the xUnit report options,
+- **CD, the janitor, and the bootstrap workflow have not run on GitHub yet.** On 2026-10-04, CI ran for the first push
+  to `main` and passed every job (backend tests and coverage, frontend checks, manifests and Bicep, the six images,
+  and the Compose smoke test). The preview workflow ran on Dependabot's first pull requests and skipped deployment
+  because Azure is not configured, as designed. CD ignores pushes that change only documentation and did not run for
+  the first push; the janitor runs on its daily schedule and the bootstrap workflow is manual. All three were checked
+  statically (actionlint with shellcheck), and their building blocks were run locally: `scripts/k8s-validate.sh`,
   `kustomize edit set image`, and the migrator and overlay scripts (through the kind deployment).
 - **Nothing was deployed to Azure.** The Bicep builds and lints cleanly, but `scripts/azure-deploy-infra.sh`, the
   role assignments (including whether Reader is needed for `az acr login` with AcrPush), the free-offer settings, and
