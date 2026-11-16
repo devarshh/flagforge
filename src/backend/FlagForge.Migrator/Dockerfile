@@ -4,7 +4,7 @@
 
 # The SDK stage runs on the build machine's architecture and targets the image's (-a $TARGETARCH), which is fast
 # on any host and publishes only the Linux native libraries the image needs.
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0 AS build
 ARG TARGETARCH
 WORKDIR /src
 
